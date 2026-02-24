@@ -345,7 +345,7 @@ def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
 
     return EventualExp(S=S_new, P=P_new, alpha=alpha_new, beta=beta_new)
 
-def convert_to_eventual_exp(prior: Dict[str, Union["UniformBox", EventualExp, "Normal"]]):
+def convert_to_eventual_exp(prior: Dict[str, Union[UniformBox, EventualExp, Normal]]):
     """
     Convert all values in the prior dict to EventualExp (in-place).
 
