@@ -161,11 +161,11 @@ def parse_program(program_str):
     x3,x4 = EventualExp([[0,1/2],[0,1]],[[0.2,0.3,0.3],[0.1,0.5,0.2],[0.2,0.1,0.1]],[0.3,0.2],[0.4,0.6])
     program:
     while(x1<0){
-      if(x2>0.5){
-        x3:=x3+0.2
-      }else{
+        if(x2>0.5){
+            x3:=x3+0.2
+        }else{
         x4:=x4+0.3
-      }
+        }
     }
     """
     prior, program = split_program(program_str)
