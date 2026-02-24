@@ -35,7 +35,7 @@ class Normal:
         diff = x - self.mean
         return float(math.exp(-0.5 * diff @ self._inv_cov @ diff) / math.sqrt((2 * math.pi) ** self.dim * self._det_cov))
     
-    def to_eventual_exp(self, S: Sequence[Sequence[float]] = None) -> EventualExp:
+    def to_eventual_exp(self, S: Sequence[Sequence[Fraction]] = None) -> EventualExp:
         if self.dim == 1:
             mean = self.mean[0]
             var = self.cov[0, 0]
@@ -321,7 +321,24 @@ class EventualExp:
     def __str__(self) -> str:
         return f"S: {self.S}\nP: {self.P}\nalpha: {self.alpha}\nbeta: {self.beta}"
 
-        
+
+def convert_to_eventual_exp(prior: Dict[str, Union[UniformBox, EventualExp, Normal]]):
+    """
+    Convert all values in the prior dict to EventualExp (in-place).
+
+    UniformBox is converted exactly, while Normal is converted to an upper-bounding EventualExp approximation.
+    """
+    for var, dist in prior.items():
+        if isinstance(dist, UniformBox):
+            prior[var] = dist.to_eventual_exp()
+        elif isinstance(dist, Normal):
+            # Currently use the default partition; may be replaced by a better scheme later.
+            prior[var] = dist.to_eventual_exp(None)
+        elif isinstance(dist, EventualExp):
+            pass
+        else:
+            raise TypeError(f"Unsupported prior type for {var}: {type(dist)}")
+
 def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
     """
     Merge multiple mutually independent EventualExp.
@@ -347,25 +364,6 @@ def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
             P_new = P_new.reshape(P_new.shape + (1,) * P_e.ndim) * P_e
 
     return EventualExp(S=S_new, P=P_new, alpha=alpha_new, beta=beta_new)
-
-def convert_to_eventual_exp(prior: Dict[str, Union[UniformBox, EventualExp, Normal]]):
-    """
-    Convert all values in the prior dict to EventualExp (in-place).
-
-    UniformBox is converted exactly, while Normal is converted to an upper-bounding EventualExp approximation.
-    """
-    for var, dist in prior.items():
-        if isinstance(dist, UniformBox):
-            prior[var] = dist.to_eventual_exp()
-        elif isinstance(dist, Normal):
-            # Currently use the default partition; may be replaced by a better scheme later.
-            prior[var] = dist.to_eventual_exp(None)
-        elif isinstance(dist, EventualExp):
-            pass
-        else:
-            raise TypeError(f"Unsupported prior type for {var}: {type(dist)}")
-
-    
 
 def merge_prior(prior: Dict[Tuple[str, ...], EventualExp]) -> Tuple[Tuple[str, ...], EventualExp]:
     """
