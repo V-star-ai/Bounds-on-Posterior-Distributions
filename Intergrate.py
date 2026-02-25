@@ -27,6 +27,7 @@ from probably.pgcl.ast.instructions import (
     TickInstr,
     WhileInstr,
 )
+from prior import EventualExp
 
 
 # -------------------------
