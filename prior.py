@@ -176,7 +176,7 @@ class UniformBox:
         return EventualExp(S=S_copy, P=P_full, alpha=alpha, beta=beta)
 
     def __str__(self) -> str:
-        return f"S: {self.S}\nP: {self.P}\nalpha: {self.alpha}\nbeta: {self.beta}"
+        return f"S: {self.S}\nP: {self.P}"
     
             
         
