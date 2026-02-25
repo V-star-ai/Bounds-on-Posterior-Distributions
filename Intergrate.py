@@ -249,10 +249,19 @@ def collect_denoms_in_expr(expr: Expr) -> Set[int]:
     return denoms
 
 
-def collect_scales(program: Program) -> Dict[str, int]:
-    # Only scale REAL-typed variables (your examples都是 real). :contentReference[oaicite:2]{index=2}
-    real_vars = {v for v, t in program.variables.items() if isinstance(t, RealType)}
-    per_var_denoms: Dict[str, Set[int]] = {v: set() for v in real_vars}
+def collect_scales(var_order: Tuple[str, ...], prior: EventualExp, program: Program) -> Dict[str, int]:
+    
+    # === Prior preprocessing ===
+    prior_denoms = {v: set() for v in var_order}
+    for i, si in enumerate(prior.S):
+        for bp in si:
+            if bp.denominator != 1:
+                prior_denoms[var_order[i]].add(bp.denominator)
+                
+    # === Program preprocessing ===
+    # Only scale REAL-typed variables (your examples are real). :contentReference[oaicite:2]{index=2}
+    real_vars = set(var_order)
+    per_var_denoms: Dict[str, Set[int]] = {v: set() for v in var_order}
 
     def note(vs: Set[str], denom: int) -> None:
         if denom <= 1:
@@ -341,10 +350,11 @@ def collect_scales(program: Program) -> Dict[str, int]:
 
     for s in program.instructions:
         walk_instr(s)
-
+        
     scales: Dict[str, int] = {}
     for v, ds in per_var_denoms.items():
-        scales[v] = lcm_many(ds) if ds else 1
+        denoms = ds | prior_denoms[v]
+        scales[v] = lcm_many(denoms) if denoms else 1
     return scales
 
 
@@ -392,9 +402,15 @@ def transform_rhs_for_lhs(lhs: str, rhs: Expr, scales: Dict[str, int]) -> Expr:
     return simplify(mul_int(k, rhs_sub))
 
 
-def align_program_constants_to_integers(program: Program) -> Tuple[Program, Dict[str, int]]:
-    scales = collect_scales(program)
-    real_vars = {v for v, t in program.variables.items() if isinstance(t, RealType)}
+def align_constants_to_integers(var_order: Tuple[str, ...], prior: EventualExp, program: Program) -> Tuple[Program, Dict[str, int]]:
+    scales = collect_scales(var_order, prior, program)
+    
+    # === Prior preprocessing ===
+    prior_eed = prior.integerize_to_eed([scales[var] for var in var_order])
+    
+    # === Program preprocessing ===
+    #我们默认所有变量均不是无理变量，因此前面会补一个check
+    real_vars = set(var_order)
 
     def tr_instr(instr: Instr) -> Instr:
         if isinstance(instr, AsgnInstr):
@@ -437,4 +453,4 @@ def align_program_constants_to_integers(program: Program) -> Tuple[Program, Dict
 
     new_instrs = [tr_instr(s) for s in program.instructions]
     new_prog = attr.evolve(program, instructions=new_instrs)
-    return new_prog, scales
+    return prior_eed, new_prog, scales
