@@ -322,23 +322,6 @@ class EventualExp:
         return f"S: {self.S}\nP: {self.P}\nalpha: {self.alpha}\nbeta: {self.beta}"
 
 
-def convert_to_eventual_exp(prior: Dict[str, Union[UniformBox, EventualExp, Normal]]):
-    """
-    Convert all values in the prior dict to EventualExp (in-place).
-
-    UniformBox is converted exactly, while Normal is converted to an upper-bounding EventualExp approximation.
-    """
-    for var, dist in prior.items():
-        if isinstance(dist, UniformBox):
-            prior[var] = dist.to_eventual_exp()
-        elif isinstance(dist, Normal):
-            # Currently use the default partition; may be replaced by a better scheme later.
-            prior[var] = dist.to_eventual_exp(None)
-        elif isinstance(dist, EventualExp):
-            pass
-        else:
-            raise TypeError(f"Unsupported prior type for {var}: {type(dist)}")
-
 def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
     """
     Merge multiple mutually independent EventualExp.
@@ -365,20 +348,27 @@ def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
 
     return EventualExp(S=S_new, P=P_new, alpha=alpha_new, beta=beta_new)
 
-def merge_prior(prior: Dict[Tuple[str, ...], EventualExp]) -> Tuple[Tuple[str, ...], EventualExp]:
+
+def merge_prior(prior: Dict[Tuple[str, ...], Union[UniformBox, EventualExp, Normal]]) -> Tuple[Tuple[str, ...], EventualExp]:
     """
-    Merge a prior dict into a single joint EventualExp.
+    Merge a prior dict into a var tuple and a single joint EventualExp.
 
     The variable order is determined by the iteration order of the dictionary.
     Keys (tuples of variable names) are concatenated in order, and the
-    corresponding EventualExp instances are merged in the same order.
+    corresponding distributions are first converted to EventualExp (if needed)
+    and then merged in the same order.
     """
     vars_merged: list[str] = []
-    exps: list[EventualExp] = []
+    exps: list[Union[UniformBox, EventualExp, Normal]] = []
 
-    for vars_tuple, exp in prior.items():
+    # Convert UniformBox and Normal to EventualExp
+    for vars_tuple, dist in prior.items():
         vars_merged.extend(vars_tuple)
-        exps.append(exp)
+        if isinstance(dist, UniformBox):
+            dist = dist.to_eventual_exp()
+        elif isinstance(dist, Normal):
+            dist = dist.to_eventual_exp()
+        exps.append(dist)
 
     merged_vars = tuple(vars_merged)
     merged_exp = merge_eventual_exp(exps)
