@@ -297,11 +297,11 @@ class EED:
             raise ValueError(f"EED Less Error: The addition of two variables of different dimensions, {eed1.n}, {eed2.n}")
         if eed1.n == eed2.n == 0:
             return false
-        if eed1.S != eed2.S:
-            merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(eed1.S, eed2.S)]
-            eed1, eed2 = eed1.align_to(merged_breakpoints, exp_approx="max"), eed2.align_to(merged_breakpoints, exp_approx="min")
+        merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(eed1.S, eed2.S)]
+        eed1, eed2 = eed1.align_to(merged_breakpoints, exp_approx="max"), eed2.align_to(merged_breakpoints, exp_approx="min")
         lt = np.frompyfunc(constraint_function, 2, 1)
-        constraint_list = lt(eed1.P, eed2.P).ravel().tolist()
+        constraint_list = (lt(eed1.P, eed2.P).ravel().tolist() +
+                           lt(eed1.alpha, eed2.alpha).ravel().tolist() + lt(eed1.beta, eed2.beta).ravel().tolist())
         if return_list:
             return constraint_list
         res = true
@@ -314,8 +314,8 @@ class EED:
         return res
 
     @staticmethod
-    def leq(eed1 : "EED", eed2 : "EED", *args):
-        return EED.build_constraint(eed1, eed2, lambda a, b : a <= b, *args)
+    def leq(eed1 : "EED", eed2 : "EED", **args):
+        return EED.build_constraint(eed1, eed2, lambda a, b : a <= b, **args)
 
     # for float
     def __le__(self, other):
