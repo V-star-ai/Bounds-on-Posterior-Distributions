@@ -448,6 +448,14 @@ class EED:
 
         return EED(S_new, P_new, alpha2, beta2)
 
+    def add_constant(self, axis, c):
+        """
+        add a constant in an axis.
+        """
+        S_new = [arr.copy() for arr in self.S]
+        si = S_new[axis]
+        S_new[axis] = [x + c for x in si]
+        return EED(S_new, self.P, self.alpha, self.beta)
 
 if __name__ == '__main__':
 
