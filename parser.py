@@ -2,6 +2,7 @@ from typing import List, Union, Tuple, Dict, Any
 from fractions import Fraction
 import re
 from probably.pgcl import parse_pgcl
+from prior import  Normal, UniformBox, EventualExp
 
 
 def _split_top_level_commas(s: str) -> List[str]:

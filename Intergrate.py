@@ -6,6 +6,7 @@ from math import gcd
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import attr
+from probably.pgcl import Program
 
 from probably.pgcl.ast import Program, RealType
 from probably.pgcl.ast.expressions import (
@@ -27,6 +28,8 @@ from probably.pgcl.ast.instructions import (
     TickInstr,
     WhileInstr,
 )
+
+from EED import EED
 from prior import EventualExp
 
 
@@ -403,11 +406,12 @@ def transform_rhs_for_lhs(lhs: str, rhs: Expr, scales: Dict[str, int]) -> Expr:
     return simplify(mul_int(k, rhs_sub))
 
 
-def align_constants_to_integers(var_order: Tuple[str, ...], prior: EventualExp, program: Program) -> Tuple[Program, Dict[str, int]]:
+def align_constants_to_integers(var_order: Tuple[str, ...], prior: EventualExp, program: Program) -> tuple[
+    EED, Program, dict[str, int]]:
     scales = collect_scales(var_order, prior, program)
     
     # === Prior preprocessing ===
-    prior_eed = prior.integerize_to_eed([scales[var] for var in var_order])
+    prior_eed = prior.scale_integerize_to_eed([scales[var] for var in var_order])
     
     # === Program preprocessing ===
     #我们默认所有变量均不是无理变量，因此前面会补一个check
