@@ -172,19 +172,14 @@ def plot_eed(
     X, Y = np.meshgrid(xs, ys)
 
     rows = len(enum_combos)
-    subplot_titles = [
+    titles = [
         ", ".join(lbl for (lbl, _) in combo) if combo else "EED"
         for combo in enum_combos
     ]
-    if mode == "surface":
-        fig = make_subplots(
-            rows=rows,
-            cols=1,
-            specs=[[{"type": "surface"}] for _ in range(rows)],
-            subplot_titles=subplot_titles,
-        )
-    else:
-        fig = make_subplots(rows=rows, cols=1, subplot_titles=subplot_titles)
+
+    # If multiple enum combos, use a dropdown to show one at a time.
+    use_dropdown = rows > 1
+    fig = go.Figure()
 
     for r, combo in enumerate(enum_combos, start=1):
         Z = np.zeros_like(X, dtype=float)
@@ -201,9 +196,15 @@ def plot_eed(
                 Z[i, j] = _eval_eed_at(eed, x)
         if mode == "surface":
             fig.add_trace(
-                go.Surface(z=Z, x=xs, y=ys, showscale=True, colorbar=dict(title="EED")),
-                row=r,
-                col=1,
+                go.Surface(
+                    z=Z,
+                    x=xs,
+                    y=ys,
+                    showscale=True,
+                    colorbar=dict(title="EED"),
+                    visible=(r == 1),
+                    name=titles[r - 1],
+                )
             )
         else:
             fig.add_trace(
@@ -212,16 +213,43 @@ def plot_eed(
                     x=xs,
                     y=ys,
                     colorbar=dict(title="EED"),
-                ),
-                row=r,
-                col=1,
+                    visible=(r == 1),
+                    name=titles[r - 1],
+                )
             )
 
     if mode == "surface":
-        for i in range(1, rows + 1):
-            fig.update_layout(**{f"scene{i}": dict(xaxis_title=f"axis {ax0}", yaxis_title=f"axis {ax1}")})
+        fig.update_layout(scene=dict(xaxis_title=f"axis {ax0}", yaxis_title=f"axis {ax1}"))
     else:
         fig.update_xaxes(title_text=f"axis {ax0}")
         fig.update_yaxes(title_text=f"axis {ax1}")
+
+    if use_dropdown:
+        buttons = []
+        for i, title in enumerate(titles):
+            vis = [False] * len(titles)
+            vis[i] = True
+            buttons.append(
+                dict(
+                    label=title,
+                    method="update",
+                    args=[{"visible": vis}, {"title": title}],
+                )
+            )
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    buttons=buttons,
+                    direction="down",
+                    x=1.02,
+                    xanchor="left",
+                    y=1.0,
+                    yanchor="top",
+                )
+            ],
+            title=titles[0],
+        )
+    else:
+        fig.update_layout(title=titles[0])
     fig.show()
     return fig
