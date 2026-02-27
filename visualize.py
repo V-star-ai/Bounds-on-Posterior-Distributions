@@ -82,6 +82,11 @@ def _eval_eed_at(eed: EED, x: Sequence[float]) -> float:
     return base * factor
 
 
+def _auto_num(span: float, *, min_n: int, max_n: int, scale: float) -> int:
+    n = int(max(min_n, min(max_n, span * scale)))
+    return n
+
+
 def plot_eed(
     eed: EED,
     specs: Sequence[SpecType],
@@ -135,11 +140,12 @@ def plot_eed(
         axis = var_axes[0]
         if parsed[axis].value is None:
             span = float(eed.S[axis][-1] - eed.S[axis][0])
-            ext = max(1.0, span * 0.25)
+            ext = max(1.0, span * 0.5)
+            num = _auto_num(span + 2 * ext, min_n=80, max_n=600, scale=40.0)
             var_spec = {
                 "min": float(eed.S[axis][0]) - ext,
                 "max": float(eed.S[axis][-1]) + ext,
-                "num": 200,
+                "num": num,
             }
         else:
             var_spec = parsed[axis].value if parsed[axis].kind == "var" else {}
@@ -170,21 +176,23 @@ def plot_eed(
     ax0, ax1 = var_axes
     if parsed[ax0].value is None:
         span0 = float(eed.S[ax0][-1] - eed.S[ax0][0])
-        ext0 = max(1.0, span0 * 0.5)
+        ext0 = max(1.0, span0 * 0.25)
+        num0 = _auto_num(span0 + 2 * ext0, min_n=40, max_n=240, scale=20.0)
         v0 = {
             "min": float(eed.S[ax0][0]) - ext0,
             "max": float(eed.S[ax0][-1]) + ext0,
-            "num": 100,
+            "num": num0,
         }
     else:
         v0 = parsed[ax0].value if parsed[ax0].kind == "var" else {}
     if parsed[ax1].value is None:
         span1 = float(eed.S[ax1][-1] - eed.S[ax1][0])
         ext1 = max(1.0, span1 * 0.25)
+        num1 = _auto_num(span1 + 2 * ext1, min_n=40, max_n=240, scale=20.0)
         v1 = {
             "min": float(eed.S[ax1][0]) - ext1,
             "max": float(eed.S[ax1][-1]) + ext1,
-            "num": 100,
+            "num": num1,
         }
     else:
         v1 = parsed[ax1].value if parsed[ax1].kind == "var" else {}
