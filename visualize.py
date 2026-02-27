@@ -133,7 +133,16 @@ def plot_eed(
 
     if len(var_axes) == 1:
         axis = var_axes[0]
-        var_spec = parsed[axis].value if parsed[axis].kind == "var" else {}
+        if parsed[axis].value is None:
+            span = float(eed.S[axis][-1] - eed.S[axis][0])
+            ext = max(1.0, span * 0.25)
+            var_spec = {
+                "min": float(eed.S[axis][0]) - ext,
+                "max": float(eed.S[axis][-1]) + ext,
+                "num": 200,
+            }
+        else:
+            var_spec = parsed[axis].value if parsed[axis].kind == "var" else {}
         vmin = var_spec.get("min", float(eed.S[axis][0]) - 3.0)
         vmax = var_spec.get("max", float(eed.S[axis][-1]) + 3.0)
         num = int(var_spec.get("num", 200))
@@ -159,8 +168,26 @@ def plot_eed(
 
     # len(var_axes) == 2
     ax0, ax1 = var_axes
-    v0 = parsed[ax0].value if parsed[ax0].kind == "var" else {}
-    v1 = parsed[ax1].value if parsed[ax1].kind == "var" else {}
+    if parsed[ax0].value is None:
+        span0 = float(eed.S[ax0][-1] - eed.S[ax0][0])
+        ext0 = max(1.0, span0 * 0.5)
+        v0 = {
+            "min": float(eed.S[ax0][0]) - ext0,
+            "max": float(eed.S[ax0][-1]) + ext0,
+            "num": 100,
+        }
+    else:
+        v0 = parsed[ax0].value if parsed[ax0].kind == "var" else {}
+    if parsed[ax1].value is None:
+        span1 = float(eed.S[ax1][-1] - eed.S[ax1][0])
+        ext1 = max(1.0, span1 * 0.25)
+        v1 = {
+            "min": float(eed.S[ax1][0]) - ext1,
+            "max": float(eed.S[ax1][-1]) + ext1,
+            "num": 100,
+        }
+    else:
+        v1 = parsed[ax1].value if parsed[ax1].kind == "var" else {}
     x0_min = v0.get("min", float(eed.S[ax0][0]) - 3.0)
     x0_max = v0.get("max", float(eed.S[ax0][-1]) + 3.0)
     x1_min = v1.get("min", float(eed.S[ax1][0]) - 3.0)
