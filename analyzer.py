@@ -134,23 +134,27 @@ class ProgramStructure:
                 walk_expr(instr.cond)
 
                 # test
-                test_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals)
+                test_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
+                                                     max_function = adapter.max if solver else None)
                 for s in instr.body:
                     test_eed = walk_instr(s, test_eed, solver)
 
                 # solve
                 merged_S = [EED.merge_breakpoints(s1, s2, -1) for (s1, s2) in zip(ctx_eed.S, test_eed.S)]
                 ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S)
-                true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals)
+                true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
+                                                     max_function = adapter.max if solver else None)
                 for s in instr.body:
                     true_eed = walk_instr(s, true_eed, solver)
                 solver = adapter.restrict_leq(true_eed, ctx_eed, solver)
-                ctx_eed = adapter.solve(true_eed, solver)
+                ctx_eed = adapter.solve(ctx_eed, solver)
             elif isinstance(instr, IfInstr):
                 var_name, intervals = validate_if_condition(instr.cond)
                 neg_intervals = interval_complement(intervals)
-                true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals)
-                false_eed = ctx_eed.restrict_interval(self.var_map[var_name], neg_intervals)
+                true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
+                                                     max_function = adapter.max if solver else None)
+                false_eed = ctx_eed.restrict_interval(self.var_map[var_name], neg_intervals,
+                                                     max_function = adapter.max if solver else None)
                 walk_expr(instr.cond)
                 for s in instr.true:
                     true_eed = walk_instr(s, true_eed, solver)

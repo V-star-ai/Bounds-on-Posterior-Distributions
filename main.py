@@ -19,26 +19,34 @@ test_prog_str = '''
         }
         '''
 
-simple_test = '''
+simple_test1 = '''
     prior:
-        x1 = Normal(0, 1)
+        x1 = UniformBox([[0, 1]], [1])
+        x3 = UniformBox([[0, 1]], [1])
+    program:
+        while(0 <= x1) {
+            {x1 := x1 - 1} [0.5] {x3 := x3 - 0.1}
+        }
+        '''
+
+simple_test2 = '''
+    prior:
+        x1 = UniformBox([[0, 1]], [1])
         x2 = UniformBox([[0, 1]], [1])
         x3 = UniformBox([[0, 1]], [1])
     program:
         while(0 <= x1) {
             if(0.5 <= x2) {
-                x1 := x1 - 0.1;
+                x1 := x1 - 1;
             } else {
-                x1 := x1 - 0.1;
-                x3 := x3 + 0.1;
+                x3 := x3 - 0.1;
             }
         }
         '''
 
-prog = ProgramStructure(simple_test)
+prog = ProgramStructure(simple_test1)
 print(prog.disc_prog)
 print(prog.var_order)
-print(prog.ori_eed.S)
 result = prog.solve_eed(Z3Adapter())
 print(result.S)
 print(result.P)
