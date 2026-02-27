@@ -1,16 +1,46 @@
 from probably.pgcl.parser import parse_pgcl
-from Intergrate import align_program_constants_to_integers
+from analyzer import ProgramStructure
+from Adapter.Z3Adapter import Z3Adapter
 
-code = """
-real x1;
-real x2;
-while(x1 >= 0.6 & x2 < 1.4 || x1 > 0.2) {
-    {x1 := x1 + 2.1} [0.6] {x2 := 0.4};
-}
-"""
+test_prog_str = '''
+    prior:
+        x1 = Normal(0, 1)
+        x2 = UniformBox([[0, 1]], [1])
+        x3,x4 = EventualExp([[0, 1/2], [0, 1]], [[0.2, 0.3, 0.3], [0.1, 0.5, 0.2], [0.2, 0.1, 0.1]], [0.3, 0.2], [0.4, 0.6])
+    program:
+        while(0 <= x1) {
+            if(0.5 <= x2) {
+                x1 := x1 - 0.1;
+                x3 := x3 - 0.2;
+            } else {
+                x1 := x1 - 0.1;
+                x4 := x4 - 0.3;
+            }
+        }
+        '''
 
-ast = parse_pgcl(code)
-new_ast, scales = align_program_constants_to_integers(ast)
+simple_test = '''
+    prior:
+        x1 = Normal(0, 1)
+        x2 = UniformBox([[0, 1]], [1])
+        x3 = UniformBox([[0, 1]], [1])
+    program:
+        while(0 <= x1) {
+            if(0.5 <= x2) {
+                x1 := x1 - 0.1;
+            } else {
+                x1 := x1 - 0.1;
+                x3 := x3 + 0.1;
+            }
+        }
+        '''
 
-print(scales)
-print(new_ast)
+prog = ProgramStructure(simple_test)
+print(prog.disc_prog)
+print(prog.var_order)
+print(prog.ori_eed.S)
+result = prog.traverse_disc_prog(Z3Adapter())
+print(result.S)
+print(result.P)
+print(result.alpha)
+print(result.beta)
