@@ -16,3 +16,8 @@ class Adapter(ABC):
     @abstractmethod
     def max(self, a, b):
         raise NotImplementedError
+
+    @abstractmethod
+    def restrict_leq(self, eed1, eed2, solver):
+        raise NotImplementedError
+

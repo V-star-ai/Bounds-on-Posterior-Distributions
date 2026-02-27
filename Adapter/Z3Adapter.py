@@ -45,11 +45,16 @@ class Z3Adapter(Adapter):
 
     def solve(self, eed_z3: EED, solver) -> EED:
         if solver.check() != z3.sat:
-            raise RuntimeError("Solver did not return SAT")
+            raise RuntimeError(f"Solver did not return SAT, but {solver.check()}")
 
         model = solver.model()
 
         def eval_or_zero(v):
+            if not z3.is_expr(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return 0.0
             if model.eval(v, model_completion=True) is None:
                 return 0.0
             val = model.eval(v, model_completion=True)
@@ -70,3 +75,15 @@ class Z3Adapter(Adapter):
 
     def max(self, a, b):
         return z3.If(a >= b, a, b)
+
+    def restrict_leq(self, eed1, eed2, solver):
+        c = EED.leq(
+            eed1,
+            eed2,
+            return_list=False,
+            and_function=z3.And,
+            true=z3.BoolVal(True),
+            false=z3.BoolVal(False),
+        )
+        solver.add(c)
+        return solver
