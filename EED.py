@@ -448,6 +448,86 @@ class EED:
 
         return EED(S_new, P_new, alpha2, beta2)
 
+    def restrict_interval(
+            self,
+            axis: int,
+            intervals,
+            *,
+            exp_approx: str = "max",
+            ring_min: str = "boundary",
+            one: Any = 1,
+            zero: Any = 0,
+            fill: Any = 0,
+            max_function=None,
+    ) -> "EED":
+        """
+        Restrict to a union of intervals on a given axis.
+        intervals: list of (lo, hi), using None for -inf / +inf.
+                   Semantics: [lo, hi), with None as unbounded.
+        """
+        axis = int(axis)
+        if not (0 <= axis < self.n):
+            raise IndexError(f"axis 越界：{axis}")
+
+        def normalize(ints):
+            cleaned = []
+            for it in ints:
+                if it is None or len(it) != 2:
+                    raise ValueError("interval must be (lo, hi)")
+                lo, hi = it
+                if lo is not None:
+                    lo = int(lo)
+                if hi is not None:
+                    hi = int(hi)
+                if lo is not None and hi is not None and lo >= hi:
+                    raise ValueError("interval must satisfy lo < hi")
+                cleaned.append((lo, hi))
+            if not cleaned:
+                return []
+
+            def lo_key(x):
+                return -float("inf") if x[0] is None else x[0]
+
+            cleaned.sort(key=lo_key)
+            merged = []
+            for lo, hi in cleaned:
+                if not merged:
+                    merged.append([lo, hi])
+                    continue
+                mlo, mhi = merged[-1]
+                if mhi is None:
+                    continue
+                if lo is None or lo <= mhi:
+                    if mhi is None or hi is None:
+                        merged[-1][1] = None
+                    else:
+                        merged[-1][1] = max(mhi, hi)
+                else:
+                    merged.append([lo, hi])
+            return [tuple(x) for x in merged]
+
+        intervals = normalize(intervals)
+        if not intervals:
+            # empty: everything becomes fill
+            return self.restrict_ge(axis, 0, fill=fill).restrict_lt(axis, 0, fill=fill)
+
+        res = None
+        for lo, hi in intervals:
+            cur = self
+            if lo is not None:
+                cur = cur.restrict_ge(axis, lo, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero, fill=fill)
+            if hi is not None:
+                cur = cur.restrict_lt(axis, hi, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero, fill=fill)
+            if res is None:
+                res = cur
+            else:
+                res = EED.add(res, cur, interval=EED.DefaultInterval, max_function=max_function)
+
+        return res
+
+    def times_constant(self, constant: float) -> "EED":
+        return EED(self.S, self.P * constant, self.alpha, self.beta)
+
     def add_constant(self, axis, c):
         """
         add a constant in an axis.
@@ -465,7 +545,12 @@ if __name__ == '__main__':
     b = a
     print(b.S)
     print(b.P)
-    c = b.restrict_lt(0, -1).restrict_lt(1, 3)
+    c = b.restrict_lt(0, 1).restrict_lt(1, 3).restrict_ge(0, -3)
+    print(c.S)
+    print(c.P)
+    print(c.alpha)
+    print(c.beta)
+    c = b.restrict_interval(0, [(-3, 1), (3, None)]).restrict_interval(1, [(None, 3)])
     print(c.S)
     print(c.P)
     print(c.alpha)
