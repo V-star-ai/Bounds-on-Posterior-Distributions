@@ -2,7 +2,7 @@ import numpy as np
 import z3
 
 from EED import EED
-from Adapter.Adapter import Adapter
+from Adapter.adapter import Adapter
 
 
 class Z3Adapter(Adapter):

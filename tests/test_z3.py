@@ -2,7 +2,7 @@ import numpy as np
 import z3
 
 from EED import EED
-from Adapter.Z3Adapter import Z3Adapter
+from Adapter.z3_adapter import Z3Adapter
 
 
 def z3max(a, b):

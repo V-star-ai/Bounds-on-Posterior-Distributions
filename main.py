@@ -1,6 +1,6 @@
 from probably.pgcl.parser import parse_pgcl
 from analyzer import ProgramStructure
-from Adapter.Z3Adapter import Z3Adapter
+from Adapter.z3_adapter import Z3Adapter
 
 test_prog_str = '''
     prior:
