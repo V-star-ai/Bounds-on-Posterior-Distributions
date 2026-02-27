@@ -2,6 +2,8 @@ from probably.pgcl.parser import parse_pgcl
 from analyzer import ProgramStructure
 from Adapter.z3_adapter import Z3Adapter
 
+from visualize import plot_eed
+
 test_prog_str = '''
     prior:
         x1 = Normal(0, 1)
@@ -21,7 +23,7 @@ test_prog_str = '''
 
 simple_test1 = '''
     prior:
-        x1 = UniformBox([[0, 1]], [1])
+        x1 = Normal(0, 1)
         x3 = UniformBox([[0, 1]], [1])
     program:
         while(0 <= x1) {
@@ -41,6 +43,7 @@ simple_test2 = '''
             } else {
                 x3 := x3 - 0.1;
             }
+            x2 := x2 + 0.5;
         }
         '''
 
@@ -52,3 +55,5 @@ print(result.S)
 print(result.P)
 print(result.alpha)
 print(result.beta)
+
+plot_eed(result, specs=[("var", None), ("var", None)], mode="surface")
