@@ -27,7 +27,7 @@ class ProgramStructure:
         self.ori_eed, self.disc_prog, self.scales = align_constants_to_integers(self.var_order, exp, self.ori_prog)
         self.ctx_eed = deepcopy(self.ori_eed)
 
-    def traverse_disc_prog(self, adapter : Adapter):
+    def solve_eed(self, adapter : Adapter):
         """
         Traverse self.disc_prog (pgcl AST) and enforce assignments are x := x + c.
         For each valid assignment, apply self.ctx_eed.add_constant(var_index, c).
