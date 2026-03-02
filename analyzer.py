@@ -162,8 +162,10 @@ class ProgramStructure:
                     false_eed = walk_instr(s, false_eed, solver)
                 ctx_eed = EED.add(true_eed, false_eed, max_function = adapter.max if solver else None)
             elif isinstance(instr, ObserveInstr):
-                raise ValueError(f"Unsupported statement: observe")
-                # walk_expr(instr.cond)
+                var_name, intervals = validate_if_condition(instr.cond)
+                ctx_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
+                                                    max_function = adapter.max if solver else None)
+                walk_expr(instr.cond)
             elif isinstance(instr, ChoiceInstr):
                 validate_choice_prob(instr.prob)
                 left_eed = ctx_eed
