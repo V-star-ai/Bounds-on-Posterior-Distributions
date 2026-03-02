@@ -91,7 +91,7 @@ def plot_eed(
     eed: EED,
     specs: Sequence[SpecType],
     *,
-    mode: str = "heatmap",  # "heatmap" | "surface"
+    mode: str = "surface",  # "heatmap" | "surface"
 ):
     if len(specs) != eed.n:
         raise ValueError("specs length must equal EED dimension")
