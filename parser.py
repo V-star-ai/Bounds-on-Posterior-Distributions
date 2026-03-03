@@ -150,22 +150,22 @@ def split_program(src: str) -> Tuple[str, str]:
             
 def parse_program(program_str):
     """
-    Parse a full DSL source into (prior_dict, pgcl_program):
-      - prior section is parsed by parse_prior()
-      - program section is parsed by parse_pgcl()
-      
+    Parse a full DSL source into (prior_dict, pgcl_program), where prior_dict maps tuples of variable names to their initial priors, and pgcl_program is the parsed pGCL AST.
+    The prior section is parsed by parse_prior(); the program section is parsed by parse_pgcl().
+    
     Example input:
-
+    
     prior:
     x1 = Normal(0,1)
     x2 = UniformBox([[0,1]],[1])
     x3,x4 = EventualExp([[0,1/2],[0,1]],[[0.2,0.3,0.3],[0.1,0.5,0.2],[0.2,0.1,0.1]],[0.3,0.2],[0.4,0.6])
     program:
-    while(x1<0){
+    while(1/3){
         if(x2>0.5){
             x3:=x3+0.2
         }else{
-        x4:=x4+0.3
+            x1:=x1+1
+            x4:=x4+0.3
         }
     }
     """
