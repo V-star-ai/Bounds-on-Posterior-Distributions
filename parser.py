@@ -1,9 +1,27 @@
 import re
+from dataclasses import dataclass
 from typing import List, Union, Tuple, Dict, Any
 from fractions import Fraction
 from probably.pgcl import parse_pgcl
 from prior import  Normal, UniformBox, EventualExp
 
+@dataclass(frozen=True)
+class NormalExpr:
+    """Expression node representing a Normal distribution."""
+    mean: Any
+    var: Any
+
+    def __str__(self) -> str:
+        return f"normal({self.mean},{self.var})"
+
+@dataclass(frozen=True)
+class UniformExpr:
+    """Expression node representing a Uniform distribution on an interval."""
+    lower: Any
+    upper: Any
+
+    def __str__(self) -> str:
+        return f"uniform({self.lower},{self.upper})"
 
 def _split_top_level_commas(s: str) -> List[str]:
     """Split by commas at top level. Assumes no whitespace."""
@@ -147,6 +165,69 @@ def split_program(src: str) -> Tuple[str, str]:
     program = m.group(2)
     return prior, program
 
+def replace_distributions(code: str):
+    """
+    Replace `normal(...)` / `uniform(...)` with `distribution_i` and store
+    mapping: placeholder -> NormalExpr/UniformExpr.
+    """
+    pattern = re.compile(r"\b(normal|uniform)\s*\(\s*([^()]*)\s*\)")
+    distribution_map = {}
+    counter = 0
+
+    dist_constructors = {
+        "normal": NormalExpr,
+        "uniform": UniformExpr,
+    }
+
+    def to_num(tok: str):
+        tok = "".join(tok.split()) # drop all whitespace
+        if "." in tok:
+            return float(tok)
+        if "/" in tok:
+            return Fraction(tok)
+        return int(tok)
+
+    def repl(m: re.Match) -> str:
+        nonlocal counter
+        key = f"distribution_{counter}"
+
+        name = m.group(1)   # "normal" or "uniform"
+        inner = m.group(2)  # argument string inside the parentheses, e.g. "1.2, 1/3"
+
+        args = [to_num(t) for t in inner.split(",")]
+        distribution_map[key] = dist_constructors[name](*args)
+
+        counter += 1
+        return key
+
+    return pattern.sub(repl, code), distribution_map
+
+def reverse_replace_distributions(syntax_tree, distribution_map):
+    """
+    Reverse the earlier transformation that replaced distribution calls with 
+    placeholder variables such as "distribution_0", "distribution_1", etc.
+    """
+    if isinstance(syntax_tree, list):
+        for item in syntax_tree:
+            reverse_replace_distributions(item, distribution_map)
+
+    elif isinstance(syntax_tree, WhileInstr):
+        reverse_replace_distributions(syntax_tree.body, distribution_map)
+
+    elif isinstance(syntax_tree, IfInstr):
+        reverse_replace_distributions(syntax_tree.true, distribution_map)
+        reverse_replace_distributions(syntax_tree.false, distribution_map)
+
+    elif isinstance(syntax_tree, ChoiceInstr):
+        reverse_replace_distributions(syntax_tree.lhs, distribution_map)
+        reverse_replace_distributions(syntax_tree.rhs, distribution_map)
+
+    elif isinstance(syntax_tree, AsgnInstr):
+        # Only replace if RHS is a placeholder variable: VarExpr("distribution_i")
+        if isinstance(syntax_tree.rhs, VarExpr) and bool(re.match(r"^distribution_\d+$", syntax_tree.rhs.var)):
+            placeholder = syntax_tree.rhs.var
+            syntax_tree.rhs = distribution_map[placeholder]
+
             
 def parse_program(program_str):
     """
@@ -169,5 +250,8 @@ def parse_program(program_str):
         }
     }
     """
-    prior, program = split_program(program_str)
-    return parse_prior(prior), parse_pgcl(program)
+    prior_str, body_str = split_program(program_str)
+    body_str, distribution_map = replace_distributions(body_str)
+    prog_body = parse_pgcl(body_str)
+    reverse_replace_distributions(prog_body, distribution_map)
+    return parse_prior(prior), prog_body
