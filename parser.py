@@ -253,5 +253,5 @@ def parse_program(program_str):
     prior_str, body_str = split_program(program_str)
     body_str, distribution_map = replace_distributions(body_str)
     prog_body = parse_pgcl(body_str)
-    reverse_replace_distributions(prog_body, distribution_map)
+    reverse_replace_distributions(prog_body.instructions, distribution_map)
     return parse_prior(prior_str), prog_body
