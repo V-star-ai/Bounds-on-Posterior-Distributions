@@ -245,8 +245,8 @@ def parse_program(program_str):
         if(x2>0.5){
             x3:=x3+0.2
         }else{
-            x1:=x1+1
-            x4:=x4+0.3
+            x1:=normal(0,1)
+            x4:=uniform(0,1)
         }
     }
     """
