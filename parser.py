@@ -1,27 +1,9 @@
 import re
-from dataclasses import dataclass
 from typing import List, Union, Tuple, Dict, Any
 from fractions import Fraction
 from probably.pgcl import parse_pgcl
-from prior import  Normal, UniformBox, EventualExp
+from ir import  Normal, UniformBox, EventualExp
 
-@dataclass(frozen=True)
-class NormalExpr:
-    """Expression node representing a Normal distribution."""
-    mean: Any
-    var: Any
-
-    def __str__(self) -> str:
-        return f"normal({self.mean},{self.var})"
-
-@dataclass(frozen=True)
-class UniformExpr:
-    """Expression node representing a Uniform distribution on an interval."""
-    lower: Any
-    upper: Any
-
-    def __str__(self) -> str:
-        return f"uniform({self.lower},{self.upper})"
 
 def _split_top_level_commas(s: str) -> List[str]:
     """Split by commas at top level. Assumes no whitespace."""
@@ -175,8 +157,8 @@ def replace_distributions(code: str):
     counter = 0
 
     dist_constructors = {
-        "normal": NormalExpr,
-        "uniform": UniformExpr,
+        "normal": Normal,
+        "uniform": UniformBox,
     }
 
     def to_num(tok: str):
@@ -191,16 +173,17 @@ def replace_distributions(code: str):
         nonlocal counter
         key = f"distribution_{counter}"
 
-        name = m.group(1)   # "normal" or "uniform"
+        name = m.group(1)   # distribution name, e.g. "normal", "uniform"
         inner = m.group(2)  # argument string inside the parentheses, e.g. "1.2, 1/3"
 
         args = [to_num(t) for t in inner.split(",")]
         distribution_map[key] = dist_constructors[name](*args)
-
+            
         counter += 1
         return key
 
     return pattern.sub(repl, code), distribution_map
+
 
 def reverse_replace_distributions(syntax_tree, distribution_map):
     """
@@ -225,8 +208,7 @@ def reverse_replace_distributions(syntax_tree, distribution_map):
     elif isinstance(syntax_tree, AsgnInstr):
         # Only replace if RHS is a placeholder variable: VarExpr("distribution_i")
         if isinstance(syntax_tree.rhs, VarExpr) and bool(re.match(r"^distribution_\d+$", syntax_tree.rhs.var)):
-            placeholder = syntax_tree.rhs.var
-            syntax_tree.rhs = distribution_map[placeholder]
+            syntax_tree.rhs = distribution_map[syntax_tree.rhs.var]
 
             
 def parse_program(program_str):
