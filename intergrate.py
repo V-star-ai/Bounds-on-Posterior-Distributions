@@ -30,7 +30,7 @@ from probably.pgcl.ast.instructions import (
 )
 
 from EED import EED
-from prior import EventualExp
+from ir import EventualExp
 
 
 # -------------------------
