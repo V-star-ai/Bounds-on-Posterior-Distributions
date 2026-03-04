@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Sequence, Tuple, Union
 import numpy as np
+from ir import UniformBox, EventualExp, Normal
 
 
 def merge_eventual_exp(exps: Sequence[EventualExp]) -> EventualExp:
