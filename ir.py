@@ -297,4 +297,4 @@ class EventualExp:
         return EventualExp.product(other, self)
     
     def __str__(self) -> str:
-        return f"S: {self.S}\nP: {self.P}\nalpha: {self.alpha}\nbeta: {self.beta}"
+        return f"eventual_exp(S: {self.S}, P: {self.P}, alpha: {self.alpha}, beta: {self.beta})"
