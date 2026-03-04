@@ -177,7 +177,8 @@ def replace_distributions(code: str):
         inner = m.group(2)  # argument string inside the parentheses, e.g. "1.2, 1/3"
 
         args = [to_num(t) for t in inner.split(",")]
-        distribution_map[key] = dist_constructors[name](*args)
+        dist = dist_constructors[name](*args)
+        distribution_map[key] = dist.to_eventual_exp()
             
         counter += 1
         return key
