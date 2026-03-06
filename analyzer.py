@@ -5,6 +5,7 @@ from parser import parse_program
 from prior import merge_prior
 from EED import EED
 from Adapter import Adapter
+from Adapter.expr import Expr
 
 from probably.pgcl.ast.expressions import Binop, BinopExpr, UnopExpr, VarExpr, NatLitExpr, RealLitExpr
 from intervals import const_int_value, interval_intersect, interval_union, interval_complement
@@ -135,7 +136,7 @@ class ProgramStructure:
 
                 # test
                 test_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                     max_function = adapter.max if solver else None)
+                                                     max_function = Expr.max if solver else None)
                 for s in instr.body:
                     test_eed = walk_instr(s, test_eed, solver)
 
@@ -143,28 +144,28 @@ class ProgramStructure:
                 merged_S = [EED.merge_breakpoints(s1, s2, -1) for (s1, s2) in zip(ctx_eed.S, test_eed.S)]
                 ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S)
                 true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                     max_function = adapter.max if solver else None)
+                                                     max_function = Expr.max if solver else None)
                 for s in instr.body:
                     true_eed = walk_instr(s, true_eed, solver)
                 solver = adapter.restrict_leq(true_eed, ctx_eed, solver)
-                ctx_eed = adapter.solve(ctx_eed, solver)
+                ctx_eed = adapter.solve_expr(ctx_eed, solver)
             elif isinstance(instr, IfInstr):
                 var_name, intervals = validate_if_condition(instr.cond)
                 neg_intervals = interval_complement(intervals)
                 true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                     max_function = adapter.max if solver else None)
+                                                     max_function = Expr.max if solver else None)
                 false_eed = ctx_eed.restrict_interval(self.var_map[var_name], neg_intervals,
-                                                     max_function = adapter.max if solver else None)
+                                                     max_function = Expr.max if solver else None)
                 walk_expr(instr.cond)
                 for s in instr.true:
                     true_eed = walk_instr(s, true_eed, solver)
                 for s in instr.false:
                     false_eed = walk_instr(s, false_eed, solver)
-                ctx_eed = EED.add(true_eed, false_eed, max_function = adapter.max if solver else None)
+                ctx_eed = EED.add(true_eed, false_eed, max_function = Expr.max if solver else None)
             elif isinstance(instr, ObserveInstr):
                 var_name, intervals = validate_if_condition(instr.cond)
                 ctx_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                    max_function = adapter.max if solver else None)
+                                                    max_function = Expr.max if solver else None)
                 walk_expr(instr.cond)
             elif isinstance(instr, ChoiceInstr):
                 validate_choice_prob(instr.prob)
@@ -176,7 +177,7 @@ class ProgramStructure:
                     right_eed = walk_instr(s, right_eed, solver)
                 val = validate_choice_prob(instr.prob)
                 return EED.add(left_eed.times_constant(val), right_eed.times_constant(1. - val),
-                               max_function = adapter.max if solver else None)
+                               max_function = Expr.max if solver else None)
             elif isinstance(instr, LoopInstr):
                 raise ValueError("Unsupported statement: loop { body }")
             elif isinstance(instr, TickInstr):

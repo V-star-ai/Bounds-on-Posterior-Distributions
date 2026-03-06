@@ -296,7 +296,7 @@ class EED:
         if eed1.n != eed2.n:
             raise ValueError(f"EED Less Error: The addition of two variables of different dimensions, {eed1.n}, {eed2.n}")
         if eed1.n == eed2.n == 0:
-            return false
+            return [] if return_list else false
         merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(eed1.S, eed2.S)]
         eed1, eed2 = eed1.align_to(merged_breakpoints, exp_approx="max"), eed2.align_to(merged_breakpoints, exp_approx="min")
         lt = np.frompyfunc(constraint_function, 2, 1)
