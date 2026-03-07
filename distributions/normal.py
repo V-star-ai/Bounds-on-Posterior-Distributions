@@ -42,30 +42,30 @@ class Normal:
                 S0 = np.asarray(S[0], dtype=float)
             else:
                 # Default partition:
-                # 1) std_trunc  = truncate(std, 1 decimal)
-                # 2) T          = max(std_trunc, 1.0)
-                # 3) mean_trunc = truncate(mean, 1 decimal)
-                # 4) interval   = [mean_trunc - T, mean_trunc + T]
+                # 1) scaled_std_trunc = truncate(1.2 * std, 1 decimal)
+                # 2) T                = max(scaled_std_trunc, 1.0)
+                # 3) mean_trunc       = truncate(mean, 1 decimal)
+                # 4) interval         = [mean_trunc - T, mean_trunc + T]
                 # 5) breakpoints every 0.1, inclusive endpoints
 
                 # Convert to decimal-semantics Fractions first (avoids binary-float artifacts)
                 mean_q = Fraction(str(mean))
                 std = math.sqrt(var)
-                std_q = Fraction(str(std))
+                scaled_std_q = Fraction(str(1.2 * std))
 
                 # Truncate to 1 decimal in Fraction land: trunc1(x) = floor(10*x)/10
                 mean_trunc = (mean_q * 10) // 1
                 mean_trunc = Fraction(mean_trunc, 10)
 
-                std_trunc = (std_q * 10) // 1
-                std_trunc = Fraction(std_trunc, 10)
+                scaled_std_trunc = (scaled_std_q * 10) // 1
+                scaled_std_trunc = Fraction(scaled_std_trunc, 10)
 
-                T = max(std_trunc, Fraction(1, 1))
+                T = max(scaled_std_trunc, Fraction(1, 1))
                 lb = mean_trunc - T
                 ub = mean_trunc + T
 
                 step = Fraction(1, 10)
-                n = int((ub - lb) / step)                           
+                n = int((ub - lb) / step)
                 S0 = [lb + i * step for i in range(n + 1)]          
                 
             # Require the core interval to contain the mean, otherwise the bound can be very loose.
