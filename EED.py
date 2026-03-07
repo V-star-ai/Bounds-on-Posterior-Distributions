@@ -69,9 +69,8 @@ class EED:
                 f"P 的前 {self.n} 维形状应为 {expected_spatial}，但得到 {self.P.shape[:self.n]}"
             )
 
-    def align_to(self, S_new, *, one=1, zero=0,
+    def align_to(self, S_new, *,
                  exp_approx: str = "max",
-                 ring_min: str = "boundary",
                  check_subset: bool = True) -> "EED":
         """
         exp_approx:
@@ -86,11 +85,8 @@ class EED:
           - 适配 object/SMT：指数为0时返回 one；ring_min="infimum" 时用 zero
         """
         exp_approx = exp_approx.lower()
-        ring_min = ring_min.lower()
         if exp_approx not in ("max", "min"):
             raise ValueError("exp_approx 只能是 'max' 或 'min'")
-        if ring_min not in ("boundary", "infimum"):
-            raise ValueError("ring_min 只能是 'boundary' 或 'infimum'")
 
         S_new = [np.asarray(si, dtype=int) for si in S_new]
         if len(S_new) != self.n:
@@ -144,20 +140,13 @@ class EED:
                 # 右指数 min 在 x->r^-：指数 end - e
                 right_exp_mid = np.maximum(ends - e, 0)
 
-            f_mid = _pow_int_array(self.alpha[axis], left_exp_mid, one=one) * \
-                    _pow_int_array(self.beta[axis], right_exp_mid, one=one)
+            f_mid = _pow_int_array(self.alpha[axis], left_exp_mid) * \
+                    _pow_int_array(self.beta[axis], right_exp_mid)
 
-            # --- 无穷 ring 的处理
-            # ring 的意义：边界面/边界点的“基值”（指数从这里开始延拓）
-            # 因此 ring_min="boundary" 时，即使用边界点的指数值（紧下界）
-            if exp_approx == "min" and ring_min == "infimum":
-                f0 = zero
-                flast = zero
-            else:
-                # 左 ring：边界在 sn[0]，旧左指数指数 = b - sn[0]
-                f0 = _pow_int_array(self.alpha[axis], np.array([max(b - int(sn[0]), 0)]), one=one)[0]
-                # 右 ring：边界在 sn[-1]，旧右指数指数 = sn[-1] - e
-                flast = _pow_int_array(self.beta[axis], np.array([max(int(sn[-1]) - e, 0)]), one=one)[0]
+            # 左 ring：边界在 sn[0]，旧左指数指数 = b - sn[0]
+            f0 = _pow_int_array(self.alpha[axis], np.array([max(b - int(sn[0]), 0)]))[0]
+            # 右 ring：边界在 sn[-1]，旧右指数指数 = sn[-1] - e
+            flast = _pow_int_array(self.beta[axis], np.array([max(int(sn[-1]) - e, 0)]))[0]
 
             f = np.concatenate(([f0], f_mid, [flast]))
             factor_list.append(f)
@@ -278,11 +267,7 @@ class EED:
     def build_constraint(
             eed1 : "EED",
             eed2 : "EED",
-            constraint_function,
-            return_list : bool = False,
-            and_function = None,
-            true = True,
-            false = False):
+            constraint_function):
         """
         :param eed1: left element
         :param eed2: right element
@@ -296,26 +281,17 @@ class EED:
         if eed1.n != eed2.n:
             raise ValueError(f"EED Less Error: The addition of two variables of different dimensions, {eed1.n}, {eed2.n}")
         if eed1.n == eed2.n == 0:
-            return [] if return_list else false
+            return []
         merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(eed1.S, eed2.S)]
         eed1, eed2 = eed1.align_to(merged_breakpoints, exp_approx="max"), eed2.align_to(merged_breakpoints, exp_approx="min")
         lt = np.frompyfunc(constraint_function, 2, 1)
         constraint_list = (lt(eed1.P, eed2.P).ravel().tolist() +
                            lt(eed1.alpha, eed2.alpha).ravel().tolist() + lt(eed1.beta, eed2.beta).ravel().tolist())
-        if return_list:
-            return constraint_list
-        res = true
-        if and_function:
-            for element in constraint_list:
-                res = and_function(res, element)
-        else:
-            for element in constraint_list:
-                res = res & element
-        return res
+        return constraint_list
 
     @staticmethod
-    def leq(eed1 : "EED", eed2 : "EED", **args):
-        return EED.build_constraint(eed1, eed2, lambda a, b : a <= b, **args)
+    def leq(eed1 : "EED", eed2 : "EED"):
+        return EED.build_constraint(eed1, eed2, lambda a, b : a <= b)
 
     # for float
     def __le__(self, other):
@@ -354,10 +330,6 @@ class EED:
             a: int,
             *,
             exp_approx: str = "max",
-            ring_min: str = "boundary",
-            one: Any = 1,
-            zero: Any = 0,
-            fill: Any = 0,
     ) -> "EED":
         """
         限制到 x_axis >= a，其它区域赋 fill，并把多余的 0 区域裁掉（同步修改 S）。
@@ -371,7 +343,7 @@ class EED:
         # 1) 插入断点并对齐
         S_align = [si.copy() for si in self.S]
         S_align[axis] = self._insert_breakpoint(S_align[axis], a)
-        g = self.align_to(S_align, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero)
+        g = self.align_to(S_align, exp_approx=exp_approx)
 
         si = g.S[axis]
         k = self._index_of(si, a)  # si[k] == a
@@ -389,12 +361,12 @@ class EED:
         # 3) 新函数的“外侧”是 x<a，对应新轴的左 ring（index 0），设为 fill
         indexer2 = [slice(None)] * P_new.ndim
         indexer2[axis] = 0
-        P_new[tuple(indexer2)] = fill
+        P_new[tuple(indexer2)] = 0
 
         # 4) 衰减率：左侧无效，设 alpha[axis]=0（可用 zero 适配 SMT）
         alpha2 = list(g.alpha)
         beta2 = list(g.beta)
-        alpha2[axis] = zero
+        alpha2[axis] = 0
 
         return EED(S_new, P_new, alpha2, beta2)
 
@@ -404,10 +376,6 @@ class EED:
             b: int,
             *,
             exp_approx: str = "max",
-            ring_min: str = "boundary",
-            one: Any = 1,
-            zero: Any = 0,
-            fill: Any = 0,
     ) -> "EED":
         """
         限制到 x_axis < b，其它区域赋 fill，并把多余的 0 区域裁掉（同步修改 S）。
@@ -421,7 +389,7 @@ class EED:
         # 1) 插入断点并对齐
         S_align = [si.copy() for si in self.S]
         S_align[axis] = self._insert_breakpoint(S_align[axis], b)
-        g = self.align_to(S_align, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero)
+        g = self.align_to(S_align, exp_approx=exp_approx)
 
         si = g.S[axis]
         k = self._index_of(si, b)  # si[k] == b
@@ -439,12 +407,12 @@ class EED:
         # 3) 新函数的“外侧”是 x>=b，对应新轴的右 ring（最后一格），设为 fill
         indexer2 = [slice(None)] * P_new.ndim
         indexer2[axis] = -1
-        P_new[tuple(indexer2)] = fill
+        P_new[tuple(indexer2)] = 0
 
         # 4) 衰减率：右侧无效，设 beta[axis]=0
         alpha2 = list(g.alpha)
         beta2 = list(g.beta)
-        beta2[axis] = zero
+        beta2[axis] = 0
 
         return EED(S_new, P_new, alpha2, beta2)
 
@@ -454,10 +422,6 @@ class EED:
             intervals,
             *,
             exp_approx: str = "max",
-            ring_min: str = "boundary",
-            one: Any = 1,
-            zero: Any = 0,
-            fill: Any = 0,
             max_function=None,
     ) -> "EED":
         """
@@ -509,15 +473,15 @@ class EED:
         intervals = normalize(intervals)
         if not intervals:
             # empty: everything becomes fill
-            return self.restrict_ge(axis, 0, fill=fill).restrict_lt(axis, 0, fill=fill)
+            return self.restrict_ge(axis, 0).restrict_lt(axis, 0)
 
         res = None
         for lo, hi in intervals:
             cur = self
             if lo is not None:
-                cur = cur.restrict_ge(axis, lo, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero, fill=fill)
+                cur = cur.restrict_ge(axis, lo, exp_approx=exp_approx)
             if hi is not None:
-                cur = cur.restrict_lt(axis, hi, exp_approx=exp_approx, ring_min=ring_min, one=one, zero=zero, fill=fill)
+                cur = cur.restrict_lt(axis, hi, exp_approx=exp_approx)
             if res is None:
                 res = cur
             else:

@@ -53,7 +53,6 @@ class Adapter(ABC):
         c = EED.leq(
             eed_constant,
             eed_expr,
-            return_list=True,
         )
         
         envs.constraints_list += c
@@ -172,7 +171,6 @@ class Adapter(ABC):
         c = EED.leq(
             eed1,
             eed2,
-            return_list=True,
         )
         envs.constraints_list += c
         return envs
