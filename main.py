@@ -1,5 +1,6 @@
 from probably.pgcl.parser import parse_pgcl
 from analyzer import ProgramStructure
+from Adapter.ipopt_adapter import IpoptAdapter
 from Adapter.z3_adapter import Z3Adapter
 
 from visualize import plot_eed
@@ -50,7 +51,7 @@ simple_test2 = '''
 prog = ProgramStructure(simple_test1)
 print(prog.disc_prog)
 print(prog.var_order)
-result = prog.solve_eed(Z3Adapter())
+result = prog.solve_eed(IpoptAdapter())
 print(result.S)
 print(result.P)
 print(result.alpha)
