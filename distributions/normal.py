@@ -2,7 +2,7 @@ from fractions import Fraction
 from typing import Any, Sequence
 import math
 import numpy as np
-from distributions.eed import EED
+from distributions import EED
 
 
 
