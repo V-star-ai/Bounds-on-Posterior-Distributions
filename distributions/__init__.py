@@ -1,4 +1,4 @@
 from distributions.normal import Normal
-from distributions.eed import EED
+from distributions.EED import EED
 
 __all__ = ["Normal", "EED"]
