@@ -48,7 +48,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     )
 
 
-def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, EED]]) -> Tuple[Tuple[str, ...], EED]:
+def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]) -> Tuple[Tuple[str, ...], EED]:
     """
     Merge a prior dict into a var tuple and a single joint EED.
 
