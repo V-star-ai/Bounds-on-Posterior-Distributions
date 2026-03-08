@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Sequence, List, Any
+from typing import Sequence, List, Any, Optional, Iterable
 from numpy.typing import ArrayLike, NDArray
 
 def _pow_int_array(base: Any, exps: np.ndarray, one: Any = 1) -> np.ndarray:
