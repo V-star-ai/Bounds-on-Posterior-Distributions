@@ -8,59 +8,6 @@ from utils import parse_number, parse_object_sequence_string
 from distributions import Normal, Uniform, Exponential, EED
 
 
-def split_top_level(s: str, sep: str = ",") -> list[str]:
-    """Split at top-level separators, ignoring separators inside [], (), and {}."""
-
-    parts = []
-    buf = []
-    d_sq = d_rd = d_cu = 0
-
-    for ch in s:
-        if ch == "[":
-            d_sq += 1
-            buf.append(ch)
-        elif ch == "]":
-            d_sq -= 1
-            if d_sq < 0:
-                raise ValueError("Unbalanced ']'")
-            buf.append(ch)
-        elif ch == "(":
-            d_rd += 1
-            buf.append(ch)
-        elif ch == ")":
-            d_rd -= 1
-            if d_rd < 0:
-                raise ValueError("Unbalanced ')'")
-            buf.append(ch)
-        elif ch == "{":
-            d_cu += 1
-            buf.append(ch)
-        elif ch == "}":
-            d_cu -= 1
-            if d_cu < 0:
-                raise ValueError("Unbalanced '}'")
-            buf.append(ch)
-        elif ch == sep and d_sq == 0 and d_rd == 0 and d_cu == 0:
-            part = "".join(buf)
-            if not part:
-                raise ValueError(f"Empty item encountered when splitting by '{sep}'")
-            parts.append(part)
-            buf = []
-        else:
-            buf.append(ch)
-
-    if d_sq != 0 or d_rd != 0 or d_cu != 0:
-        raise ValueError("Unbalanced brackets/braces/parentheses")
-
-    tail = "".join(buf)
-    if tail:
-        parts.append(tail)
-    elif s:
-        raise ValueError(f"Trailing '{sep}' or empty item encountered")
-
-    return parts
-
-
 def parse_mapping_string(s: str):
     """
     Parse a mapping string into a Python dict.
@@ -86,7 +33,7 @@ def parse_mapping_string(s: str):
 
         if x[0] == "(" and x[-1] == ")":
             body = x[1:-1]
-            raw = tuple(parse_number(p) for p in split_top_level(body))
+            raw = tuple(parse_object_sequence_string(body))
             if not raw:
                 raise ValueError("Empty key encountered")
         else:
