@@ -9,8 +9,8 @@ from distributions import EED
 class Normal:
     def __init__(self, mean: Sequence[float], cov: Sequence[Sequence[float]]):
         # Normalize inputs
-        self.mean = np.asarray(self.mean, dtype=float)
-        self.cov = np.asarray(self.cov, dtype=float)
+        self.mean = np.asarray(mean, dtype=float)
+        self.cov = np.asarray(cov, dtype=float)
         
         # Allow scalar inputs for 1D cases
         if self.mean.ndim == 0:
