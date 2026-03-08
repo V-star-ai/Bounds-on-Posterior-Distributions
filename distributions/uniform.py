@@ -1,0 +1,22 @@
+import numpy as np
+from fractions import Fraction
+
+
+class Uniform:
+    def __init__(self, lb: Fraction, ub: Fraction):
+        self.lb = Fraction(lb)
+        self.ub = Fraction(ub)
+
+        if self.lb > self.ub:
+            raise ValueError("requires lb <= ub")
+
+    def to_eed(self):
+        if self.lb == self.ub:
+            return EED([[self.lb]], [0, 1, 0], [0], [0], set())
+        else:
+            density = 1.0 / float(self.ub - self.lb)
+            P = np.array([0, density, 0], dtype=float)
+            return EED([[self.lb, self.ub]], P, [0.0], [0.0], {0})
+        
+    def __str__(self) -> str:
+        return f"Uniform({self.lb},{self.ub})"
