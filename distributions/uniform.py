@@ -1,6 +1,8 @@
 import numpy as np
 from fractions import Fraction
 
+from distributions import EED
+
 
 class Uniform:
     def __init__(self, lb: Fraction, ub: Fraction):
@@ -10,7 +12,7 @@ class Uniform:
         if self.lb > self.ub:
             raise ValueError("requires lb <= ub")
 
-    def to_eed(self):
+    def to_eed(self) -> EED:
         if self.lb == self.ub:
             return EED([[self.lb]], [0, 1, 0], [0], [0], set())
         else:
