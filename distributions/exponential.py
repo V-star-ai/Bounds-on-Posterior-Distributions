@@ -9,8 +9,8 @@ class Exponential:
             raise ValueError("Exponential rate λ must be positive")
 
     def to_eed(self) -> "EED":
-        alpha = [math.exp(-lam)]
-        P = np.array([0.0, lam, lam], dtype=float)
+        alpha = [math.exp(-self.lam)]
+        P = np.array([0.0, self.lam, self.lam], dtype=float)
         return EED([[0]], P, alpha, [0.0], {0})
     
     def __str__(self) -> str:
