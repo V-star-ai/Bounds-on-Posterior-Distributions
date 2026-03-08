@@ -135,4 +135,7 @@ class Normal:
             raise NotImplementedError("Only dim==1 is supported for now.")
             
     def __str__(self) -> str:
-        return f"normal({self.mean},{self.cov})"
+        return f"Normal({self.mean},{self.cov})"
+    
+    def __repr__(self):
+        return f"Normal(mean={self.mu}, cov={self.sigma})"
