@@ -16,5 +16,5 @@ class Exponential:
     def __str__(self) -> str:
         return f"Exponential({self.lam})"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"Exponential({self.lam})"
