@@ -1,0 +1,17 @@
+import math
+import numpy as np
+
+class Exponential:
+    def __init__(self, lam: float):
+        self.lam = lam
+
+        if self.lam <= 0:
+            raise ValueError("Exponential rate λ must be positive")
+
+    def to_eed(self) -> "EED":
+        alpha = [math.exp(-lam)]
+        P = np.array([0.0, lam, lam], dtype=float)
+        return EED([[0]], P, alpha, [0.0], {0})
+    
+    def __str__(self) -> str:
+        return f"Exponential({self.lam})"
