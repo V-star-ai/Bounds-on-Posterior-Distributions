@@ -24,7 +24,7 @@ def split_program(src_str: str) -> Tuple[str, str]:
     return prior, program
 
 
-def parse_src(src_str: str) -> Tuple[dict, program]:
+def parse_src(src_str: str) -> Tuple[dict, Program]:
     """
     Parse a full DSL source into (prior_dict, pgcl_program), where prior_dict maps
     tuples of variable names to their initial priors, and pgcl_program is the parsed pGCL AST.
