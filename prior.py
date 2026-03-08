@@ -1,6 +1,6 @@
 from typing import Sequence, Dict, Tuple, Union
 import numpy as np
-from distributions import EED, Normal
+from distributions import EED, Normal, Exponential, Uniform
 
 
 def merge_eed(eeds: Sequence[EED]) -> EED:
@@ -63,8 +63,12 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, EED]]) -> Tuple[Tuple
     for vars_tuple, dist in prior.items():
         vars_merged.extend(vars_tuple)
         
-        # Convert Normal to EventualExp
+        # Convert distribution to EED
         if isinstance(dist, Normal):
+            dist = dist.to_eed()
+        elif isinstance(dist, Uniform):
+            dist = dist.to_eed()
+        elif isinstance(dist, Exponential):
             dist = dist.to_eed()
             
         eeds.append(dist)
