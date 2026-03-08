@@ -30,45 +30,52 @@ def _pow_int_array(base: Any, exps: np.ndarray, one: Any = 1) -> np.ndarray:
 
 class EED:
     """
-    EED(S, P, alpha, beta)
+    EED(S, P, alpha, beta, continuous_dims)
 
-    S: 每维断点（严格递增整数），区间统一 [l,r)
-    P: ndarray，空间维形状为 (len(S0)+1, len(S1)+1, ..., len(Sn-1)+1)
-       也就是：每维 [d_i + 2]，左右各一圈边界值
-       索引语义（对第 i 维，m=len(S_i)）：
-         0        : 左边界圈（x < S_i[0]）
-         1..m-1   : 区间 [S_i[j-1], S_i[j])
-         m        : 右边界圈（x >= S_i[-1]）
-    alpha: 左侧衰减率向量（0<= <1）
-    beta : 右侧衰减率向量（0<= <1）
+    S: Breakpoints for each dimension (strictly increasing integers).
+    P: ndarray. The spatial shape is (len(S0)+1, len(S1)+1, ..., len(Sn-1)+1).
+       That is, each dimension has (d_i + 2) regions including the two boundary rings.
+       Index semantics (for dimension i, where m = len(S_i)):
+         0        : left boundary ring (x < S_i[0])
+         1..m-1   : density value on interval [S_i[j-1], S_i[j])
+         m        : right boundary ring (x >= S_i[-1])
+    alpha: Left-side decay rate vector (0 <= alpha_i < 1).
+    beta : Right-side decay rate vector (0 <= beta_i < 1).
+    continuous_dims: Set of indices indicating which dimensions are continuous variables.
     """
-
     DefaultInterval : int = -1
 
-    def __init__(self, S: Sequence[Sequence[int]], P: Any,
-                 alpha: Sequence[Any], beta: Sequence[Any]):
-        self.S: List[np.ndarray] = [np.asarray(si, dtype=int) for si in S]
+    def __init__(
+        self,
+        S: Sequence[Sequence[Fraction]],
+        P: Any,
+        alpha: Sequence[Any],
+        beta: Sequence[Any],
+        continuous_dims: Optional[Iterable[int]] = None,
+    ):
+        self.S: list[np.ndarray] = [np.asarray(si, dtype=object) for si in S]
         self.P: np.ndarray = np.asarray(P)
         self.alpha = list(alpha)
         self.beta = list(beta)
         self.n = len(self.S)
-
-        if len(self.alpha) != self.n or len(self.beta) != self.n:
-            raise ValueError(f"alpha/beta 长度必须等于维度 n={self.n}")
-
+        self.continuous_dims = set(continuous_dims or [])
+        
+        # shape checks
         for i, si in enumerate(self.S):
             if si.ndim != 1 or len(si) < 1:
-                raise ValueError(f"S[{i}] 必须至少有 1 个断点（允许退化：只有边界，没有常数块）")
-
+                raise ValueError(f"S[{i}] must contain at least one breakpoint")
             if len(si) >= 2 and not np.all(si[1:] > si[:-1]):
-                raise ValueError(f"S[{i}] 断点必须严格递增")
-
-        expected_spatial = tuple(len(si) + 1 for si in self.S)
+                raise ValueError(f"S[{i}] must be strictly increasing")
+                
+        expected_spatial = tuple(max(3, len(si) + 1) if i in self.continuous_dims else len(si) for i, si in enumerate(self.S))
         if self.P.shape[:self.n] != expected_spatial:
             raise ValueError(
-                f"P 的前 {self.n} 维形状应为 {expected_spatial}，但得到 {self.P.shape[:self.n]}"
+                f"P.shape[:{self.n}] must be {expected_spatial}, got {self.P.shape[:self.n]}"
             )
-
+            
+        if len(self.alpha) != self.n or len(self.beta) != self.n:
+            raise ValueError(f"alpha and beta must have length {self.n}")
+            
     def align_to(self, S_new, *,
                  exp_approx: str = "max",
                  check_subset: bool = True) -> "EED":
