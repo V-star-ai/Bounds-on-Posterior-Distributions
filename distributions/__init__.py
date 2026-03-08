@@ -1,4 +1,4 @@
-from distributions.EED import EED
+from distributions.eed import EED
 from distributions.normal import Normal
 from distributions.uniform import Uniform
 from distributions.exponential import Exponential
