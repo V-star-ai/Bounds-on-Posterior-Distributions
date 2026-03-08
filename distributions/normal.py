@@ -137,5 +137,5 @@ class Normal:
     def __str__(self) -> str:
         return f"Normal({self.mean},{self.cov})"
     
-    def __repr__(self):
-        return f"Normal(mean={self.mu}, cov={self.sigma})"
+    def __repr__(self) -> str:
+        return f"Normal(mean={self.mean}, cov={self.cov})"
