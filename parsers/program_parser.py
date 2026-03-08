@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from utils import parse_object_sequence_string
+from parsers.parser_utils import parse_object_sequence_string
 from distributions import EED, Normal, Uniform, Exponential
 
 from probably.pgcl import parse_pgcl
