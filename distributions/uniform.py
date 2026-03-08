@@ -20,3 +20,6 @@ class Uniform:
         
     def __str__(self) -> str:
         return f"Uniform({self.lb},{self.ub})"
+
+    def __repr__(self) -> str:
+        return f"Uniform({self.lb},{self.ub})"
