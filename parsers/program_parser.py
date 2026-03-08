@@ -92,7 +92,7 @@ def reverse_replace_distributions(syntax_tree: Any, distribution_map: dict[str, 
             syntax_tree.rhs = distribution_map[syntax_tree.rhs.var]
 
 
-def parse_program(program_str: str) -> Program::
+def parse_program(program_str: str) -> Program:
     """
     Parse a program block of the DSL into a pGCL program.
 
