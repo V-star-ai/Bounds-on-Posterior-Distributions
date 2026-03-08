@@ -4,7 +4,7 @@ import numpy as np
 from fractions import Fraction
 from typing import Tuple, Union
 
-from utils import parse_number, parse_object_sequence_string
+from parsers.parser_utils import parse_number, parse_object_sequence_string
 from distributions import Normal, Uniform, Exponential, EED
 
 
