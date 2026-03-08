@@ -2,7 +2,8 @@ import re
 from typing import Any, Tuple
 from probably.pgcl.ast import Program
 
-from parsers import parse_prior, parse_program
+from parsers.prior_parser import parse_prior
+from parser.program_parser import parse_program
 
 
 def split_program(src_str: str) -> Tuple[str, str]:
