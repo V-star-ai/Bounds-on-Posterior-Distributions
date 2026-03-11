@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Sequence, List, Any, Optional, Iterable
 from numpy.typing import ArrayLike, NDArray
+from fractions import Fraction
 
 def _pow_int_array(base: Any, exps: np.ndarray, one: Any = 1) -> np.ndarray:
     """
@@ -28,20 +29,45 @@ def _pow_int_array(base: Any, exps: np.ndarray, one: Any = 1) -> np.ndarray:
     return out
 
 
+def _is_int_value(x: Any) -> bool:
+    return isinstance(x, (int, np.integer)) or (isinstance(x, Fraction) and x.denominator == 1)
+
+
+def _pow_array(base: Any, exps: Sequence[Any], one: Any = 1) -> np.ndarray:
+    """
+    Power with integer or fractional exponents.
+    - If all exponents are integer-valued, use _pow_int_array.
+    - Otherwise, require numeric base and use Python power.
+    """
+    if all(_is_int_value(e) for e in exps):
+        exps_int = np.array([int(e) for e in exps], dtype=int)
+        return _pow_int_array(base, exps_int, one=one)
+    if not isinstance(base, (int, float, complex, np.number)):
+        raise TypeError("Non-integer exponents require numeric base.")
+    return np.array([base ** float(e) for e in exps], dtype=object)
+
+
+def _sorted_unique(seq: Sequence[Any]) -> List[Any]:
+    return sorted(set(seq))
+
+
 class EED:
     """
-    EED(S, P, alpha, beta, continuous_dims)
+    EED(S, P, alpha, beta, discrete_dims)
 
-    S: Breakpoints for each dimension (strictly increasing integers).
-    P: ndarray. The spatial shape is (len(S0)+1, len(S1)+1, ..., len(Sn-1)+1).
-       That is, each dimension has (d_i + 2) regions including the two boundary rings.
-       Index semantics (for dimension i, where m = len(S_i)):
-         0        : left boundary ring (x < S_i[0])
-         1..m-1   : density value on interval [S_i[j-1], S_i[j])
-         m        : right boundary ring (x >= S_i[-1])
-    alpha: Left-side decay rate vector (0 <= alpha_i < 1).
-    beta : Right-side decay rate vector (0 <= beta_i < 1).
-    continuous_dims: Set of indices indicating which dimensions are continuous variables.
+    S:
+      - Continuous dimension: strictly increasing breakpoints (Fractions allowed).
+      - Discrete dimension: strictly increasing integer support points.
+
+    P:
+      - Continuous dimension: length = len(S_i) + 1 (with boundary rings).
+      - Discrete dimension: length = len(S_i) (point masses).
+
+    alpha/beta:
+      - Only meaningful for continuous dimensions (0 <= < 1).
+
+    discrete_dims:
+      - Boolean list of length n, True means discrete dimension.
     """
     DefaultInterval : int = -1
 
@@ -51,14 +77,19 @@ class EED:
         P: Any,
         alpha: Sequence[Any],
         beta: Sequence[Any],
-        continuous_dims: Optional[Iterable[int]] = None,
+        discrete_dims: Sequence[bool] = None,
     ):
         self.S: list[np.ndarray] = [np.asarray(si, dtype=object) for si in S]
         self.P: np.ndarray = np.asarray(P)
         self.alpha = list(alpha)
         self.beta = list(beta)
         self.n = len(self.S)
-        self.continuous_dims = set(continuous_dims or [])
+        if discrete_dims is None:
+            self.discrete_mask = [False] * self.n
+        else:
+            if len(discrete_dims) != self.n:
+                raise ValueError(f"discrete_dims length must be {self.n}")
+            self.discrete_mask = [bool(x) for x in discrete_dims]
         
         # shape checks
         for i, si in enumerate(self.S):
@@ -66,12 +97,24 @@ class EED:
                 raise ValueError(f"S[{i}] must contain at least one breakpoint")
             if len(si) >= 2 and not np.all(si[1:] > si[:-1]):
                 raise ValueError(f"S[{i}] must be strictly increasing")
-                
-        expected_spatial = tuple(max(3, len(si) + 1) if i in self.continuous_dims else len(si) for i, si in enumerate(self.S))
-        if self.P.shape[:self.n] != expected_spatial:
-            raise ValueError(
-                f"P.shape[:{self.n}] must be {expected_spatial}, got {self.P.shape[:self.n]}"
-            )
+            if self.discrete_mask[i]:
+                if not all(_is_int_value(v) for v in si):
+                    raise ValueError(f"S[{i}] must be integers for discrete dimension")
+
+        actual_spatial = self.P.shape[: self.n]
+        for i, si in enumerate(self.S):
+            if self.discrete_mask[i]:
+                expected = len(si)
+                if actual_spatial[i] != expected:
+                    raise ValueError(
+                        f"P.shape[{i}] must be {expected} for discrete dim, got {actual_spatial[i]}"
+                    )
+            else:
+                expected = len(si) + 1
+                if actual_spatial[i] != expected:
+                    raise ValueError(
+                        f"P.shape[{i}] must be {expected} for continuous dim, got {actual_spatial[i]}"
+                    )
             
         if len(self.alpha) != self.n or len(self.beta) != self.n:
             raise ValueError(f"alpha and beta must have length {self.n}")
@@ -95,7 +138,7 @@ class EED:
         if exp_approx not in ("max", "min"):
             raise ValueError("exp_approx 只能是 'max' 或 'min'")
 
-        S_new = [np.asarray(si, dtype=int) for si in S_new]
+        S_new = [np.asarray(si, dtype=object) for si in S_new]
         if len(S_new) != self.n:
             raise ValueError(f"S_new 维度数应为 {self.n}，但得到 {len(S_new)}")
 
@@ -107,65 +150,86 @@ class EED:
                 raise ValueError(f"S_new[{axis}] 至少要 1 个断点")
             if len(sn) >= 2 and not np.all(sn[1:] > sn[:-1]):
                 raise ValueError(f"S_new[{axis}] 必须严格递增")
+            if self.discrete_mask[axis]:
+                if not all(_is_int_value(v) for v in sn):
+                    raise ValueError(f"S_new[{axis}] must be integers for discrete dimension")
 
             if check_subset and (not np.isin(so, sn).all()):
                 missing = so[~np.isin(so, sn)]
                 raise ValueError(f"第 {axis} 维 S_old 不完全包含于 S_new，缺少断点: {missing}")
 
-            b = int(so[0])
-            e = int(so[-1])
-            m = len(so)  # 旧断点数；旧该轴 P 长度 m+1；右圈索引 m
-
-            # 新轴 cell 个数 = len(sn)+1
-            starts = sn[:-1]
-            ends = sn[1:]
-
-            # --- interior cells -> old index（带 ring）
-            left_mid = ends <= b
-            right_mid = starts >= e
-            inside_mid = ~(left_mid | right_mid)
-
-            k_mid = np.empty(len(starts), dtype=int)
-            k_mid[left_mid] = 0
-            k_mid[right_mid] = m
-            if np.any(inside_mid):
-                j = np.searchsorted(so, starts[inside_mid], side="right") - 1  # 0..m-2
-                k_mid[inside_mid] = 1 + j  # 1..m-1
-
-            k = np.concatenate(([0], k_mid, [m]))
-            idx_list.append(k)
-
-            # --- 指数近似（左用 alpha，右用 beta；匹配你之前的例子）
-            if exp_approx == "max":
-                # 左指数 max 在 x->r^-：指数 b - end
-                left_exp_mid = np.maximum(b - ends, 0)
-                # 右指数 max 在 x=l：指数 start - e
-                right_exp_mid = np.maximum(starts - e, 0)
+            if self.discrete_mask[axis]:
+                # discrete axis: map point masses; new points -> 0
+                idx = []
+                so_list = list(so.tolist())
+                index_map = {v: i for i, v in enumerate(so_list)}
+                for v in sn.tolist():
+                    idx.append(index_map.get(v, -1))
+                idx_list.append(np.array(idx, dtype=int))
+                factor_list.append(None)
             else:
-                # 左指数 min 在 x=l：指数 b - start
-                left_exp_mid = np.maximum(b - starts, 0)
-                # 右指数 min 在 x->r^-：指数 end - e
-                right_exp_mid = np.maximum(ends - e, 0)
+                b = so[0]
+                e = so[-1]
+                m = len(so)  # 旧断点数；旧该轴 P 长度 m+1；右圈索引 m
 
-            f_mid = _pow_int_array(self.alpha[axis], left_exp_mid) * \
-                    _pow_int_array(self.beta[axis], right_exp_mid)
+                starts = sn[:-1]
+                ends = sn[1:]
 
-            # 左 ring：边界在 sn[0]，旧左指数指数 = b - sn[0]
-            f0 = _pow_int_array(self.alpha[axis], np.array([max(b - int(sn[0]), 0)]))[0]
-            # 右 ring：边界在 sn[-1]，旧右指数指数 = sn[-1] - e
-            flast = _pow_int_array(self.beta[axis], np.array([max(int(sn[-1]) - e, 0)]))[0]
+                # --- interior cells -> old index（带 ring）
+                k_mid = np.empty(len(starts), dtype=int)
+                for i, (st, en) in enumerate(zip(starts, ends)):
+                    if en <= b:
+                        k_mid[i] = 0
+                    elif st >= e:
+                        k_mid[i] = m
+                    else:
+                        j = int(np.searchsorted(so, st, side="right") - 1)  # 0..m-2
+                        k_mid[i] = 1 + j  # 1..m-1
 
-            f = np.concatenate(([f0], f_mid, [flast]))
-            factor_list.append(f)
+                k = np.concatenate(([0], k_mid, [m]))
+                idx_list.append(k)
+
+                # --- 指数近似（左用 alpha，右用 beta）
+                left_exp_mid = []
+                right_exp_mid = []
+                if exp_approx == "max":
+                    for st, en in zip(starts, ends):
+                        left_exp_mid.append(max(b - en, 0))
+                        right_exp_mid.append(max(st - e, 0))
+                else:
+                    for st, en in zip(starts, ends):
+                        left_exp_mid.append(max(b - st, 0))
+                        right_exp_mid.append(max(en - e, 0))
+
+                f_mid = _pow_array(self.alpha[axis], left_exp_mid) * _pow_array(self.beta[axis], right_exp_mid)
+
+                f0 = _pow_array(self.alpha[axis], [max(b - sn[0], 0)])[0]
+                flast = _pow_array(self.beta[axis], [max(sn[-1] - e, 0)])[0]
+
+                f = np.concatenate(([f0], f_mid, [flast]))
+                factor_list.append(f)
 
         # --- 拉伸旧 P 到新网格
         P_new = self.P
         for axis in range(self.n):
-            P_new = np.take(P_new, idx_list[axis], axis=axis)
+            if self.discrete_mask[axis]:
+                idx = idx_list[axis]
+                idx_clip = np.where(idx >= 0, idx, 0)
+                P_new = np.take(P_new, idx_clip, axis=axis)
+                # zero out newly introduced points
+                missing = np.where(idx < 0)[0]
+                for mi in missing:
+                    slicer = [slice(None)] * P_new.ndim
+                    slicer[axis] = mi
+                    P_new[tuple(slicer)] = 0
+            else:
+                P_new = np.take(P_new, idx_list[axis], axis=axis)
 
-        # --- 乘上各维衰减因子
+        # --- 乘上连续维度衰减因子
         extra = P_new.ndim - self.n
         for axis, f in enumerate(factor_list):
+            if f is None:
+                continue
             shape = [1] * self.n
             shape[axis] = len(f)
             f_rs = f.reshape(shape)
@@ -173,7 +237,7 @@ class EED:
                 f_rs = f_rs[(...,) + (None,) * extra]
             P_new = P_new * f_rs
 
-        return EED(S_new, P_new, self.alpha, self.beta)
+        return EED(S_new, P_new, self.alpha, self.beta, self.discrete_mask)
 
     @staticmethod
     def merge_breakpoints(
@@ -191,8 +255,8 @@ class EED:
         ----
         result : 升序 int64 ndarray
         """
-        S1 = np.asarray(S1, dtype=np.int64)
-        S2 = np.asarray(S2, dtype=np.int64)
+        S1 = np.asarray(S1, dtype=object)
+        S2 = np.asarray(S2, dtype=object)
 
         if S1.ndim != 1 or S2.ndim != 1:
             raise ValueError("S1 和 S2 必须是一维数组")
@@ -201,14 +265,16 @@ class EED:
 
         # interval = -1 => 只合并排序
         if interval == -1:
-            merged = np.union1d(S1, S2)
-            return merged
+            merged = _sorted_unique(list(S1) + list(S2))
+            return np.asarray(merged, dtype=object)
 
         if interval <= 0:
             raise ValueError("interval 必须为 -1 或者正整数")
+        if not all(_is_int_value(v) for v in list(S1) + list(S2)):
+            raise ValueError("interval-based merge only supports integer breakpoints")
 
         # 合并骨架：用去重的骨架计算 gaps（重复点不影响 gap）
-        U = np.union1d(S1, S2)  # sorted unique
+        U = np.array(_sorted_unique(list(S1) + list(S2)), dtype=object)
         if U.size <= 1:
             merged = U
             return merged
@@ -217,8 +283,8 @@ class EED:
         s1_l, s1_r = S1[0], S1[-1]
         s2_l, s2_r = S2[0], S2[-1]
 
-        left = U[:-1]
-        right = U[1:]
+        left = np.asarray(U[:-1], dtype=int)
+        right = np.asarray(U[1:], dtype=int)
         gaps = right - left
 
         # 需要约束的 gaps（落在任一“端区间”里）：
@@ -250,7 +316,7 @@ class EED:
         inserted = left_m[idx] + interval * step
 
         # 合并最终结果
-        result_unique = np.union1d(U, inserted)
+        result_unique = np.union1d(U.astype(int), inserted)
 
         # 是否保留重复点：若 unique=False，则把原始 concat 的重复也带回去（再 union 插入点）
         result = result_unique
@@ -260,12 +326,19 @@ class EED:
     def add(eed1 : "EED", eed2 : "EED", interval = DefaultInterval, max_function = None):
         if eed1.n != eed2.n:
             raise ValueError(f"EED Add Error: The addition of two variables of different dimensions, {eed1.n}, {eed2.n}")
-        merged_breakpoints = [EED.merge_breakpoints(s1, s2, interval) for s1, s2 in zip(eed1.S, eed2.S)]
+        if eed1.discrete_mask != eed2.discrete_mask:
+            raise ValueError("Discrete dimension masks must match for addition")
+        merged_breakpoints = []
+        for i, (s1, s2) in enumerate(zip(eed1.S, eed2.S)):
+            if eed1.discrete_mask[i]:
+                merged_breakpoints.append(np.asarray(_sorted_unique(list(s1) + list(s2)), dtype=object))
+            else:
+                merged_breakpoints.append(EED.merge_breakpoints(s1, s2, interval))
         eed1, eed2 = eed1.align_to(merged_breakpoints), eed2.align_to(merged_breakpoints)
         if max_function:
             max2 = np.frompyfunc(max_function, 2, 1)
-            return EED(merged_breakpoints, eed1.P + eed2.P, max2(eed1.alpha, eed2.alpha), max2(eed1.beta, eed2.beta))
-        return EED(merged_breakpoints, eed1.P + eed2.P, np.maximum(eed1.alpha, eed2.alpha), np.maximum(eed1.beta, eed2.beta))
+            return EED(merged_breakpoints, eed1.P + eed2.P, max2(eed1.alpha, eed2.alpha), max2(eed1.beta, eed2.beta), eed1.discrete_mask)
+        return EED(merged_breakpoints, eed1.P + eed2.P, np.maximum(eed1.alpha, eed2.alpha), np.maximum(eed1.beta, eed2.beta), eed1.discrete_mask)
 
     def __add__(self, other):
         return EED.add(self, other, EED.DefaultInterval)
@@ -287,9 +360,16 @@ class EED:
         """
         if eed1.n != eed2.n:
             raise ValueError(f"EED Less Error: The addition of two variables of different dimensions, {eed1.n}, {eed2.n}")
+        if eed1.discrete_mask != eed2.discrete_mask:
+            raise ValueError("Discrete dimension masks must match for comparison")
         if eed1.n == eed2.n == 0:
             return []
-        merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(eed1.S, eed2.S)]
+        merged_breakpoints = []
+        for i, (s1, s2) in enumerate(zip(eed1.S, eed2.S)):
+            if eed1.discrete_mask[i]:
+                merged_breakpoints.append(np.asarray(_sorted_unique(list(s1) + list(s2)), dtype=object))
+            else:
+                merged_breakpoints.append(EED.merge_breakpoints(s1, s2, -1))
         eed1, eed2 = eed1.align_to(merged_breakpoints, exp_approx="max"), eed2.align_to(merged_breakpoints, exp_approx="min")
         lt = np.frompyfunc(constraint_function, 2, 1)
         constraint_list = (lt(eed1.P, eed2.P).ravel().tolist() +
@@ -306,26 +386,31 @@ class EED:
             return NotImplemented
         if self.n != other.n:
             return NotImplemented
-        merged_breakpoints = [EED.merge_breakpoints(s1, s2, -1) for s1, s2 in zip(self.S, other.S)]
+        if self.discrete_mask != other.discrete_mask:
+            return NotImplemented
+        merged_breakpoints = []
+        for i, (s1, s2) in enumerate(zip(self.S, other.S)):
+            if self.discrete_mask[i]:
+                merged_breakpoints.append(np.asarray(_sorted_unique(list(s1) + list(s2)), dtype=object))
+            else:
+                merged_breakpoints.append(EED.merge_breakpoints(s1, s2, -1))
         eed1, eed2 = self.align_to(merged_breakpoints, exp_approx="max"), other.align_to(merged_breakpoints, exp_approx="min")
         return np.all(eed1.P <= eed2.P)
 
     ###### apply if #####
     @staticmethod
-    def _insert_breakpoint(si: np.ndarray, x: int) -> np.ndarray:
-        """把整数断点 x 插入严格递增断点数组 si（若已存在则不变）"""
-        x = int(x)
+    def _insert_breakpoint(si: np.ndarray, x: Any) -> np.ndarray:
+        """插入断点 x（支持 Fraction/int），若已存在则不变"""
         if np.any(si == x):
             return si
-        out = np.sort(np.concatenate([si, np.array([x], dtype=int)]))
-        if not np.all(out[1:] > out[:-1]):
+        out = np.asarray(_sorted_unique(list(si.tolist()) + [x]), dtype=object)
+        if len(out) >= 2 and not np.all(out[1:] > out[:-1]):
             raise ValueError("插入断点后不严格递增")
         return out
 
     @staticmethod
-    def _index_of(si: np.ndarray, x: int) -> int:
+    def _index_of(si: np.ndarray, x: Any) -> int:
         """x 必须在 si 中，返回其下标"""
-        x = int(x)
         k = int(np.searchsorted(si, x, side="left"))
         if k >= len(si) or si[k] != x:
             raise ValueError(f"断点 {x} 未出现在对齐后的 S 里（这不应该发生）")
@@ -343,9 +428,21 @@ class EED:
         [l,r) 语义：x=a 被保留。
         """
         axis = int(axis)
-        a = int(a)
         if not (0 <= axis < self.n):
             raise IndexError(f"axis 越界：{axis}")
+        if self.discrete_mask[axis]:
+            if not _is_int_value(a):
+                raise ValueError("Discrete axis requires integer bound")
+            a = int(a)
+            P_new = np.array(self.P, copy=True)
+            si = self.S[axis]
+            for idx, v in enumerate(si):
+                if int(v) < a:
+                    slicer = [slice(None)] * P_new.ndim
+                    slicer[axis] = idx
+                    P_new[tuple(slicer)] = 0
+            return EED(self.S, P_new, self.alpha, self.beta, self.discrete_mask)
+        a = a
 
         # 1) 插入断点并对齐
         S_align = [si.copy() for si in self.S]
@@ -375,7 +472,7 @@ class EED:
         beta2 = list(g.beta)
         alpha2[axis] = 0
 
-        return EED(S_new, P_new, alpha2, beta2)
+        return EED(S_new, P_new, alpha2, beta2, self.discrete_mask)
 
     def restrict_lt(
             self,
@@ -389,9 +486,21 @@ class EED:
         [l,r) 语义：x=b 不被保留。
         """
         axis = int(axis)
-        b = int(b)
         if not (0 <= axis < self.n):
             raise IndexError(f"axis 越界：{axis}")
+        if self.discrete_mask[axis]:
+            if not _is_int_value(b):
+                raise ValueError("Discrete axis requires integer bound")
+            b = int(b)
+            P_new = np.array(self.P, copy=True)
+            si = self.S[axis]
+            for idx, v in enumerate(si):
+                if int(v) >= b:
+                    slicer = [slice(None)] * P_new.ndim
+                    slicer[axis] = idx
+                    P_new[tuple(slicer)] = 0
+            return EED(self.S, P_new, self.alpha, self.beta, self.discrete_mask)
+        b = b
 
         # 1) 插入断点并对齐
         S_align = [si.copy() for si in self.S]
@@ -421,7 +530,7 @@ class EED:
         beta2 = list(g.beta)
         beta2[axis] = 0
 
-        return EED(S_new, P_new, alpha2, beta2)
+        return EED(S_new, P_new, alpha2, beta2, self.discrete_mask)
 
     def restrict_interval(
             self,
@@ -446,10 +555,15 @@ class EED:
                 if it is None or len(it) != 2:
                     raise ValueError("interval must be (lo, hi)")
                 lo, hi = it
-                if lo is not None:
-                    lo = int(lo)
-                if hi is not None:
-                    hi = int(hi)
+                if self.discrete_mask[axis]:
+                    if lo is not None and not _is_int_value(lo):
+                        raise ValueError("Discrete axis requires integer bounds")
+                    if hi is not None and not _is_int_value(hi):
+                        raise ValueError("Discrete axis requires integer bounds")
+                    if lo is not None:
+                        lo = int(lo)
+                    if hi is not None:
+                        hi = int(hi)
                 if lo is not None and hi is not None and lo >= hi:
                     raise ValueError("interval must satisfy lo < hi")
                 cleaned.append((lo, hi))
@@ -497,7 +611,7 @@ class EED:
         return res
 
     def times_constant(self, constant: float) -> "EED":
-        return EED(self.S, self.P * constant, self.alpha, self.beta)
+        return EED(self.S, self.P * constant, self.alpha, self.beta, self.discrete_mask)
 
     def add_constant(self, axis, c):
         """
@@ -505,17 +619,23 @@ class EED:
         """
         S_new = [arr.copy() for arr in self.S]
         si = S_new[axis]
+        if self.discrete_mask[axis]:
+            if not _is_int_value(c):
+                raise ValueError("Discrete axis requires integer shift")
+            c = int(c)
         S_new[axis] = [x + c for x in si]
-        return EED(S_new, self.P, self.alpha, self.beta)
+        return EED(S_new, self.P, self.alpha, self.beta, self.discrete_mask)
 
 if __name__ == '__main__':
 
-    a = EED([[-1, 1, 4], [2, 3]], [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9], [0.3, 0.2, 0.1]], [0.25, 0.5], [0.5, 0.25])
+    a = EED([[Fraction(-1), Fraction(1), Fraction(4)], [Fraction(2), Fraction(3)]], [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9], [0.3, 0.2, 0.1]], [0.25, 0.5], [0.5, 0.25])
     print(a.S)
     print(a.P)
-    b = a
+    b = a.align_to([[Fraction(-1), Fraction(1), Fraction(4)], [Fraction(-1), Fraction(2), Fraction(3)]], exp_approx="min")
     print(b.S)
     print(b.P)
+    print(b.alpha)
+    print(b.beta)
     c = b.restrict_lt(0, 1).restrict_lt(1, 3).restrict_ge(0, -3)
     print(c.S)
     print(c.P)
