@@ -129,7 +129,7 @@ class Normal:
 
                     P[j] = self.eval_at(x_star)
 
-            return EED([S0], P, [alpha], [beta], {0})
+            return EED([S0], P, [alpha], [beta], [False])
 
         else:
             raise NotImplementedError("Only dim==1 is supported for now.")
