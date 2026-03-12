@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Tuple
 
-from EED import EED
+from distributions import EED
 from abc import ABC, abstractmethod
 from Adapter.expr import Expr, Var, Const, CompareOp, Constraint, FractionConst
 from Adapter.expr import Add, Sub, Mul, Div, Max, Pow

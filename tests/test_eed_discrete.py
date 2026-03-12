@@ -1,8 +1,10 @@
 from fractions import Fraction
+import math
 import numpy as np
 from jedi.plugins import pytest
 
 from distributions import EED
+from Adapter.expr import Expr, Var
 
 
 def _make_mixed_eed():
@@ -90,6 +92,111 @@ def test_restrict_interval_discrete():
     assert np.allclose(r.P[:, 2], 0.0)
     assert np.allclose(r.P[:, 1], eed.P[:, 1])
 
+
+def test_assign_eed_continuous_axis_exact():
+    base = EED(
+        [[Fraction(0), Fraction(2)], [0, 1]],
+        np.array(
+            [
+                [0.0, 0.0],
+                [2.0, 3.0],
+                [0.0, 0.0],
+            ],
+            dtype=float,
+        ),
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [False, True],
+    )
+    assigned = EED(
+        [[Fraction(0), Fraction(1)]],
+        np.array([0.0, 5.0, 0.0], dtype=float),
+        [0.0],
+        [0.0],
+        [False],
+    )
+
+    out = base.assign_eed(axis=0, eed=assigned)
+
+    assert out.P.shape == (3, 2)
+    assert np.allclose(out.P[:, 0], [0.0, 20.0, 0.0])
+    assert np.allclose(out.P[:, 1], [0.0, 30.0, 0.0])
+    assert out.alpha[0] == assigned.alpha[0]
+    assert out.beta[0] == assigned.beta[0]
+
+
+def test_assign_eed_continuous_axis_approximate_upper_bound():
+    base = EED(
+        [[Fraction(0), Fraction(2)]],
+        np.array([1.0, 3.0, 4.0], dtype=float),
+        [0.25],
+        [0.5],
+        [False],
+    )
+    assigned = EED(
+        [[Fraction(0), Fraction(1)]],
+        np.array([0.0, 2.0, 0.0], dtype=float),
+        [0.0],
+        [0.0],
+        [False],
+    )
+
+    exact = base.assign_eed(axis=0, eed=assigned, ln=math.log)
+    approx = base.assign_eed(axis=0, eed=assigned, approximate_step=Fraction(1, 1))
+
+    assert approx.P[1] > exact.P[1]
+
+
+def test_assign_eed_discrete_axis_exact():
+    base = _make_mixed_eed()
+    assigned = EED(
+        [[10, 11]],
+        np.array([0.25, 0.75], dtype=float),
+        [0.0],
+        [0.0],
+        [True],
+    )
+
+    out = base.assign_eed(axis=1, eed=assigned)
+
+    assert out.P.shape == (3, 2)
+    assert np.allclose(out.P[0, :], [1.5, 4.5])
+    assert np.allclose(out.P[1, :], [3.75, 11.25])
+    assert np.allclose(out.P[2, :], [6.0, 18.0])
+
+
+def test_assign_eed_kind_mismatch_raises():
+    base = _make_mixed_eed()
+    discrete = EED([[0, 1]], np.array([1.0, 2.0], dtype=float), [0.0], [0.0], [True])
+
+    try:
+        base.assign_eed(axis=0, eed=discrete)
+        assert False, "expected ValueError for kind mismatch"
+    except ValueError:
+        pass
+
+
+def test_assign_eed_preserves_expr_values():
+    base = EED(
+        [[0, 1]],
+        np.array([Var("a"), 2], dtype=object),
+        [0.0],
+        [0.0],
+        [True],
+    )
+    assigned = EED(
+        [[3, 4]],
+        np.array([1, 2], dtype=object),
+        [0.0],
+        [0.0],
+        [True],
+    )
+
+    out = base.assign_eed(axis=0, eed=assigned)
+
+    assert isinstance(out.P[0], Expr)
+    assert isinstance(out.P[1], Expr)
+
 if __name__ == "__main__":
     test_restrict_interval_discrete()
     test_init_shape_and_discrete_validation()
@@ -97,3 +204,4 @@ if __name__ == "__main__":
     test_align_to_mixed_dims()
     test_restrict_on_discrete_axis()
     test_restrict_on_continuous_axis()
+    test_assign_eed_continuous_axis_exact()

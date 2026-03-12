@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from typing import Sequence, List, Any, Optional, Iterable
 from numpy.typing import ArrayLike, NDArray
@@ -49,6 +50,10 @@ def _pow_array(base: Any, exps: Sequence[Any], one: Any = 1) -> np.ndarray:
 
 def _sorted_unique(seq: Sequence[Any]) -> List[Any]:
     return sorted(set(seq))
+
+
+def _is_plain_scalar(x: Any) -> bool:
+    return isinstance(x, (int, float, complex, Fraction, np.number))
 
 
 class EED:
@@ -612,6 +617,119 @@ class EED:
 
     def times_constant(self, constant: float) -> "EED":
         return EED(self.S, self.P * constant, self.alpha, self.beta, self.discrete_mask)
+
+    def _tail_mass(
+        self,
+        coeff: Any,
+        rate: Any,
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> Any:
+        if approximate_step is None:
+            if _is_plain_scalar(rate):
+                if rate == 0:
+                    return 0
+                if rate == 1:
+                    raise ValueError("Continuous tail with decay rate 1 has infinite mass")
+                rate_for_ln = float(rate)
+            else:
+                if ln is None:
+                    raise ValueError("Exact continuous tail mass with symbolic rate requires ln")
+                rate_for_ln = rate
+
+            ln_fn = ln if ln is not None else math.log
+            log_rate = ln_fn(rate_for_ln)
+            return coeff / (0 - log_rate)
+
+        if approximate_step <= 0:
+            raise ValueError("approximate_step must be positive")
+        if _is_plain_scalar(rate) and rate == 1:
+            raise ValueError("Continuous tail with decay rate 1 has infinite mass")
+        return coeff * approximate_step / (1 - rate ** approximate_step)
+
+    def _axis_slice_mass(
+        self,
+        axis: int,
+        fixed_index: Sequence[Any],
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> Any:
+        mass = 0
+        idx = list(fixed_index)
+
+        if self.discrete_mask[axis]:
+            for point_idx in range(len(self.S[axis])):
+                idx[axis] = point_idx
+                mass = mass + self.P[tuple(idx)]
+            return mass
+
+        si = self.S[axis]
+        m = len(si)
+
+        idx[axis] = 0
+        mass = mass + self._tail_mass(self.P[tuple(idx)], self.alpha[axis], approximate_step, ln)
+
+        for block_idx in range(1, m):
+            idx[axis] = block_idx
+            width = si[block_idx] - si[block_idx - 1]
+            mass = mass + self.P[tuple(idx)] * width
+
+        idx[axis] = m
+        mass = mass + self._tail_mass(self.P[tuple(idx)], self.beta[axis], approximate_step, ln)
+        return mass
+
+    def assign_eed(
+        self,
+        axis: int,
+        eed: "EED",
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> "EED":
+        axis = int(axis)
+        if not (0 <= axis < self.n):
+            raise IndexError(f"axis 越界：{axis}")
+        if not isinstance(eed, EED):
+            raise TypeError("eed must be an EED")
+        if eed.n != 1:
+            raise ValueError("assign_eed expects a one-dimensional EED")
+        if self.discrete_mask[axis] != eed.discrete_mask[0]:
+            raise ValueError("Assigned EED kind must match the target axis kind")
+        if approximate_step is not None and self.discrete_mask[axis]:
+            approximate_step = None
+        if eed.P.shape[1:] != self.P.shape[self.n:]:
+            raise ValueError("Assigned EED extra dimensions must match the target EED")
+
+        spatial_shape_old = list(self.P.shape[: self.n])
+        spatial_shape_new = list(spatial_shape_old)
+        spatial_shape_new[axis] = eed.P.shape[0]
+        extra_shape = self.P.shape[self.n :]
+
+        P_new = np.empty(tuple(spatial_shape_new) + extra_shape, dtype=object)
+        other_axes = [i for i in range(self.n) if i != axis]
+        iter_shape = tuple(spatial_shape_old[i] for i in other_axes) + extra_shape
+        iter_indices = np.ndindex(iter_shape) if iter_shape else [()]
+
+        for combined_idx in iter_indices:
+            split = len(other_axes)
+            other_idx = combined_idx[:split]
+            extra_idx = combined_idx[split:]
+
+            src_index = [slice(None)] * self.n + list(extra_idx)
+            dst_index = [slice(None)] * self.n + list(extra_idx)
+            for other_axis, value in zip(other_axes, other_idx):
+                src_index[other_axis] = value
+                dst_index[other_axis] = value
+
+            mass = self._axis_slice_mass(axis, src_index, approximate_step, ln)
+            P_new[tuple(dst_index)] = mass * eed.P
+
+        S_new = [arr.copy() for arr in self.S]
+        S_new[axis] = eed.S[0].copy()
+        alpha_new = list(self.alpha)
+        beta_new = list(self.beta)
+        alpha_new[axis] = eed.alpha[0]
+        beta_new[axis] = eed.beta[0]
+        return EED(S_new, P_new, alpha_new, beta_new, self.discrete_mask)
 
     def add_constant(self, axis, c):
         """
