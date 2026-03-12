@@ -14,7 +14,7 @@ class Exponential:
     def to_eed(self) -> EED:
         alpha = [math.exp(-self.lam)]
         P = np.array([0.0, self.lam, self.lam], dtype=float)
-        return EED([[0]], P, alpha, [0.0], [False])
+        return EED([[0]], P, alpha, [0.0])
     
     def __str__(self) -> str:
         return f"Exponential({self.lam})"
