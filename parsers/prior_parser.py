@@ -156,7 +156,7 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
             idx = tuple(pt[i] - mins[i] + 1 for i in range(n))
             P[idx] = prob
 
-        dist_obj = EED(S, P, [0] * n, [0] * n, set())
+        dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
 
     return vars_tuple, dist_obj
 
