@@ -78,7 +78,7 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
       "x=Uniform(0,1)"
       "x=Exponential(1)"
       "x={0:0.2,1:0.5,3:0.3}"
-      "x,y=EED([[0,1],[0,1/2]],[[0.2,0.1,0.3],[0.1,0.4,0.1]],[0.1,0.2],[0.3,0.4],{0,1})"
+      "x,y=EED([[0,1],[0,1/2]],[[0.2,0.1,0.3],[0.1,0.4,0.1]],[0.1,0.2],[0.3,0.4])"
 
     Returns: (vars_tuple, dist_instance)
     """
@@ -113,7 +113,17 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
         args_str = rhs[1:-1]
 
         if dist_name == "EED":
-            args = parse_object_sequence_string(args_str, {0: "fraction", -1: "int"})
+            args = parse_object_sequence_string(args_str, {0: "fraction"})
+            n = len(args[0])
+
+            if len(args) == 4:
+                args.append([False] * n)
+            elif len(args) == 5:
+                discrete_dims = set(args[4])
+                args[4] = [any(x == i for x in discrete_dims) for i in range(n)]
+            else:
+                raise ValueError("EED expects 4 or 5 arguments in the input string.")
+
             dist_obj = EED(*args)
 
         elif dist_name == "Normal":
