@@ -66,9 +66,7 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential,
         # Convert distribution to EED
         if isinstance(dist, Normal):
             dist = dist.to_eed()
-        elif isinstance(dist, Uniform):
-            dist = dist.to_eed()
-        elif isinstance(dist, Exponential):
+        elif isinstance(dist, (Uniform, Exponential)):
             dist = dist.to_eed()
             
         eeds.append(dist)
