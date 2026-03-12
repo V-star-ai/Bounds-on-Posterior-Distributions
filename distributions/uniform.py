@@ -18,7 +18,7 @@ class Uniform:
         else:
             density = 1.0 / float(self.ub - self.lb)
             P = np.array([0, density, 0], dtype=float)
-            return EED([[self.lb, self.ub]], P, [0.0], [0.0], {0})
+            return EED([[self.lb, self.ub]], P, [0.0], [0.0], [False])
         
     def __str__(self) -> str:
         return f"Uniform({self.lb},{self.ub})"
