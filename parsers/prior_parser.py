@@ -117,14 +117,13 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
             n = len(args[0])
 
             if len(args) == 4:
-                args.append([False] * n)
+                dist_obj = EED(*args)
             elif len(args) == 5:
                 discrete_dims = set(args[4])
                 args[4] = [any(x == i for x in discrete_dims) for i in range(n)]
+                dist_obj = EED(*args)
             else:
                 raise ValueError("EED expects 4 or 5 arguments in the input string.")
-
-            dist_obj = EED(*args)
 
         elif dist_name == "Normal":
             args = parse_object_sequence_string(args_str)
