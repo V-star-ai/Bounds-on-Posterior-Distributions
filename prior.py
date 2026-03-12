@@ -8,9 +8,8 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     Merge multiple mutually independent EEDs.
 
     The merged EED concatenates dimensions in the given order:
-      - S / alpha / beta are concatenated
+      - S / alpha / beta / discrete_dims are concatenated
       - P is the tensor product via broadcasting multiplication
-      - continuous_dims are shifted and merged accordingly
     """
     if len(eeds) == 0:
         return None
@@ -21,13 +20,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     S_new = [list(si) for e in eeds for si in e.S]   # copy to avoid aliasing
     alpha_new = [a for e in eeds for a in e.alpha]
     beta_new = [b for e in eeds for b in e.beta]
-
-    # merge continuous dimension indices with offsets
-    continuous_dims_new = set()
-    offset = 0
-    for e in eeds:
-        continuous_dims_new.update(offset + i for i in e.continuous_dims)
-        offset += e.n
+    discrete_dims_new = [d for e in eeds for d in e.discrete_dims]
 
     # tensor product of block values via broadcasting multiplication
     P_new = np.asarray(eeds[0].P).copy()
@@ -44,7 +37,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
         P=P_new,
         alpha=alpha_new,
         beta=beta_new,
-        continuous_dims=continuous_dims_new,
+        discrete_dims=discrete_dims_new,
     )
 
 
