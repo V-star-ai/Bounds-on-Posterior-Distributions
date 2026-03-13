@@ -140,6 +140,9 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
     else:
         mapping = parse_mapping_string(rhs)
 
+        if not mapping:
+            raise ValueError("Discrete distribution mapping must not be empty.")
+
         # Infer dimension
         n = len(next(iter(mapping)))
 
