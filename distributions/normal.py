@@ -45,7 +45,7 @@ class Normal:
             if S is not None:
                 # If user provides S, require at least one breakpoints.
                 if len(S[0]) == 0:
-                    raise ValueError("S[0] must contain at least 1 breakpoints.")
+                    raise ValueError("S[0] must contain at least 1 breakpoint.")
                 S0 = np.asarray(S[0], dtype=float)
             else:
                 # Default partition:
@@ -84,7 +84,7 @@ class Normal:
                     "Otherwise the eventual-exponential upper bound may be too loose."
                 )
                 
-            P = np.zeros(max(3, len(S0)+1), dtype=float)
+            P = np.zeros(len(S0)+1, dtype=float)
 
             # Endpoint pdf values
             f_l = self.eval_at(l)
@@ -110,24 +110,20 @@ class Normal:
             P[0] = P0
             P[-1] = Pm
             
-            if len(S0) <= 2:
-                # Single core cell that contains the mean
-                P[1] = self.eval_at(mean)
-            else:
-                # Interior segments: j=1..m-1 corresponds to [S0[j-1], S0[j])
-                for j in range(1, len(S0)):
-                    a = S0[j - 1]
-                    b = S0[j]
+            # Interior segments: j=1..m-1 corresponds to [S0[j-1], S0[j])
+            for j in range(1, len(S0)):
+                a = S0[j - 1]
+                b = S0[j]
 
-                    # Max of unimodal normal pdf on [a, b]:
-                    # - if mean in [a, b], max at mean
-                    # - else max at the endpoint closer to mean
-                    if a <= mean <= b:
+                # Max of unimodal normal pdf on [a, b]:
+                # - if mean in [a, b], max at mean
+                # - else max at the endpoint closer to mean
+                if a <= mean <= b:
                         x_star = mean
-                    else:
-                        x_star = a if abs(a - mean) <= abs(b - mean) else b
+                else:
+                    x_star = a if abs(a - mean) <= abs(b - mean) else b
 
-                    P[j] = self.eval_at(x_star)
+                P[j] = self.eval_at(x_star)
 
             return EED([S0], P, [alpha], [beta])
 
