@@ -57,10 +57,14 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential,
         vars_merged.extend(vars_tuple)
         
         # Convert distribution to EED
-        if isinstance(dist, Normal):
+        if isinstance(dist, EED):
+            pass
+        elif isinstance(dist, Normal):
             dist = dist.to_eed()
         elif isinstance(dist, (Uniform, Exponential)):
             dist = dist.to_eed()
+        else:
+            raise TypeError(f"Unsupported prior distribution type: {type(dist).__name__}")
             
         eeds.append(dist)
 
