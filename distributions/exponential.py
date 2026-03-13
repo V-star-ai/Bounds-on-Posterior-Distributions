@@ -13,7 +13,7 @@ class Exponential:
 
     def to_eed(self) -> EED:
         beta = [math.exp(-self.lam)]
-        P = np.array([0.0, self.lam, self.lam], dtype=float)
+        P = np.array([0.0, self.lam], dtype=float)
         return EED([[0]], P, [0.0], beta)
     
     def __str__(self) -> str:
