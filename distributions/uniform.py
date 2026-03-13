@@ -14,7 +14,13 @@ class Uniform:
 
     def to_eed(self) -> EED:
         if self.lb == self.ub:
-            return EED([[self.lb]], [0, 1, 0], [0], [0], set())
+            
+            int_lb = int(self.lb)
+            if self.lb != int_lb:
+                raise ValueError("The support of a discrete distribution must be integers.")
+                
+            return EED([[int_lb - 1, int_lb, int_lb + 1]], [0, 1, 0], [0], [0], [True])
+            
         else:
             density = 1.0 / float(self.ub - self.lb)
             P = np.array([0, density, 0], dtype=float)
