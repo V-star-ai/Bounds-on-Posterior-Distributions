@@ -20,7 +20,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     S_new = [list(si) for e in eeds for si in e.S]   # copy to avoid aliasing
     alpha_new = [a for e in eeds for a in e.alpha]
     beta_new = [b for e in eeds for b in e.beta]
-    discrete_dims_new = [d for e in eeds for d in e.discrete_masks]
+    discrete_dims_new = [d for e in eeds for d in e.discrete_mask]
 
     # tensor product of block values via broadcasting multiplication
     P_new = np.asarray(eeds[0].P).copy()
