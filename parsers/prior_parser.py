@@ -4,7 +4,7 @@ import numpy as np
 from fractions import Fraction
 from typing import Tuple, Union
 
-from parsers.parser_utils import parse_number, parse_object_sequence_string
+from parsers.parser_utils import parse_number, parse_object_sequence_string, split_top_level
 from distributions import Normal, Uniform, Exponential, EED
 
 
@@ -146,16 +146,14 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
         # Infer dimension
         n = len(next(iter(mapping)))
 
-        # Build S from per-dimension integer ranges, extended by one layer on both sides
-        mins = [min(pt[i] for pt in mapping) for i in range(n)]
-        maxs = [max(pt[i] for pt in mapping) for i in range(n)]
-
-        S = [list(range(mins[i] - 1, maxs[i] + 2)) for i in range(n)]
+        # Build S from the exact per-dimension support values.
+        # Geometric tails outside the listed support are represented by alpha/beta.
+        S = [sorted({pt[i] for pt in mapping}) for i in range(n)]
         P = np.zeros(tuple(len(si) for si in S), dtype=float)
 
         # Fill probability table
         for pt, prob in mapping.items():
-            idx = tuple(pt[i] - mins[i] + 1 for i in range(n))
+            idx = tuple(S[i].index(pt[i]) for i in range(n))
             P[idx] = prob
 
         dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
