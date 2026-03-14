@@ -29,7 +29,7 @@ class Adapter(ABC):
 
         envs = envs or AdapterEnvs({}, [])
 
-        spatial_shape = tuple(len(si) + 1 for si in S)
+        spatial_shape = tuple((len(si) if is_dis else len(si) + 1) for (si, is_dis) in zip(S, eed_constant.discrete_mask))
         extra_shape = eed_constant.P.shape[eed_constant.n :]
         full_shape = spatial_shape + extra_shape
 
@@ -41,7 +41,7 @@ class Adapter(ABC):
         alpha = [self.get_var_expr(f"{name_prefix}_alpha_{i}", envs) for i in range(eed_constant.n)]
         beta = [self.get_var_expr(f"{name_prefix}_beta_{i}", envs) for i in range(eed_constant.n)]
 
-        eed_expr = EED(S, P_expr, alpha, beta)
+        eed_expr = EED(S, P_expr, alpha, beta, eed_constant.discrete_mask)
 
         for a in alpha:
             envs.constraints_list.append(0 <= a)

@@ -1,3 +1,5 @@
+from fractions import Fraction
+
 import z3
 
 from Adapter.adapter import Adapter
@@ -6,6 +8,11 @@ from Adapter.adapter import Adapter
 class Z3Adapter(Adapter):
     def build_var(self, name):
         return z3.Real(name)
+
+    def ensure_var(self, x) -> any:
+        if isinstance(x, Fraction):
+            return float(x)
+        return x
 
     def solve(self, vars, constraints):
         solver = z3.Solver()

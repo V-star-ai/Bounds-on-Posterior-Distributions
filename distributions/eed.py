@@ -43,8 +43,6 @@ def _pow_array(base: Any, exps: Sequence[Any], one: Any = 1) -> np.ndarray:
     if all(_is_int_value(e) for e in exps):
         exps_int = np.array([int(e) for e in exps], dtype=int)
         return _pow_int_array(base, exps_int, one=one)
-    if not isinstance(base, (int, float, complex, np.number)):
-        raise TypeError("Non-integer exponents require numeric base.")
     return np.array([base ** float(e) for e in exps], dtype=object)
 
 

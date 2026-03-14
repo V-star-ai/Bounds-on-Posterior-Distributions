@@ -1,9 +1,8 @@
 from copy import deepcopy
 
-from intergrate import align_constants_to_integers
-from parser import parse_program
+from parsers import parse_src
 from prior import merge_prior
-from EED import EED
+from distributions import EED
 from Adapter import Adapter
 from Adapter.expr import Expr
 
@@ -21,11 +20,9 @@ from probably.pgcl.ast.instructions import (
 
 class ProgramStructure:
     def __init__(self, prog_str: str):
-        prog = parse_program(prog_str)
-        self.ori_prog = prog[1]
-        self.var_order, exp = merge_prior(prog[0])
+        self.prior, self.prog = parse_src(prog_str)
+        self.var_order, self.ori_eed = merge_prior(self.prior)
         self.var_map = {self.var_order[i] : i for i in range(len(self.var_order))}
-        self.ori_eed, self.disc_prog, self.scales = align_constants_to_integers(self.var_order, exp, self.ori_prog)
         self.ctx_eed = deepcopy(self.ori_eed)
 
     def solve_eed(self, adapter : Adapter):
@@ -185,6 +182,6 @@ class ProgramStructure:
             return ctx_eed
 
         result_eed = self.ctx_eed
-        for s in self.disc_prog.instructions:
+        for s in self.prog.instructions:
             result_eed = walk_instr(s, result_eed)
         return result_eed

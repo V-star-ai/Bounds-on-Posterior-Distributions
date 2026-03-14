@@ -8,7 +8,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from EED import EED
+from distributions import EED
 
 
 SpecType = Union[
