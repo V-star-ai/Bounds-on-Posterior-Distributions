@@ -179,6 +179,8 @@ class ProgramStructure:
                         true_eed = walk_instr(s, true_eed, solver)
                     solver = adapter.restrict_leq(true_eed, ctx_eed.times_constant(c), solver)
                     ctx_eed = restrict_neg(ctx_eed).times_constant(1. / (1. - c))
+                else:
+                    raise ValueError(f"Unknown method: {method}")
 
                 if need_solve:
                     ctx_eed = adapter.solve_expr(ctx_eed, solver)
