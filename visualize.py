@@ -41,10 +41,18 @@ def _parse_spec(spec: SpecType) -> _Spec:
     raise ValueError(f"Invalid spec: {spec}")
 
 
-def _enum_points_for_axis(si: Sequence[int]) -> List[Tuple[str, float]]:
+def _enum_points_for_axis(si: Sequence[int], is_discrete: bool = False) -> List[Tuple[str, float]]:
     if len(si) < 1:
         raise ValueError("S must have at least one breakpoint")
     pts: List[Tuple[str, float]] = []
+    if is_discrete:
+        s0 = int(si[0])
+        sl = int(si[-1])
+        pts.append((f"x < {si[0]}", float(s0 - 1)))
+        for v in si:
+            pts.append((f"x = {v}", float(v)))
+        pts.append((f"x > {si[-1]}", float(sl + 1)))
+        return pts
     s0 = float(si[0])
     sl = float(si[-1])
     pts.append((f"x < {si[0]}", s0 - 1.0))
@@ -65,7 +73,25 @@ def _eval_eed_at(eed: EED, x: Sequence[float]) -> float:
 
     idx = []
     factor = 1.0
-    for axis, (xi, si, a, b) in enumerate(zip(x, eed.S, eed.alpha, eed.beta)):
+    for axis, (xi, si, a, b, is_discrete) in enumerate(zip(x, eed.S, eed.alpha, eed.beta, eed.discrete_mask)):
+        if is_discrete:
+            xi_int = int(round(xi))
+            if abs(xi - xi_int) > 1e-9:
+                return 0.0
+            left = int(si[0])
+            right = int(si[-1])
+            if xi_int < left:
+                idx.append(0)
+                factor *= float(a) ** (left - xi_int)
+            elif xi_int > right:
+                idx.append(len(si) - 1)
+                factor *= float(b) ** (xi_int - right)
+            else:
+                hits = np.where(si == xi_int)[0]
+                if len(hits) == 0:
+                    return 0.0
+                idx.append(int(hits[0]))
+            continue
         s0 = float(si[0])
         sl = float(si[-1])
         m = len(si)
@@ -87,6 +113,57 @@ def _auto_num(span: float, *, min_n: int, max_n: int, scale: float) -> int:
     return n
 
 
+def _var_points_for_axis(eed: EED, axis: int, spec_value: Any):
+    si = eed.S[axis]
+    if eed.discrete_mask[axis]:
+        if spec_value is None:
+            left = int(si[0]) - 3
+            right = int(si[-1]) + 3
+            return np.arange(left, right + 1, dtype=float)
+        v = spec_value if isinstance(spec_value, dict) else {}
+        xmin = int(v.get("min", int(si[0]) - 3))
+        xmax = int(v.get("max", int(si[-1]) + 3))
+        step = int(v.get("step", 1))
+        if step <= 0:
+            raise ValueError("Discrete var axis step must be positive")
+        return np.arange(xmin, xmax + 1, step, dtype=float)
+
+    if spec_value is None:
+        span = float(si[-1] - si[0])
+        ext = max(1.0, span * 0.5)
+        num = _auto_num(span + 2 * ext, min_n=80, max_n=600, scale=40.0)
+        v = {
+            "min": float(si[0]) - ext,
+            "max": float(si[-1]) + ext,
+            "num": num,
+        }
+    else:
+        v = spec_value if isinstance(spec_value, dict) else {}
+    vmin = v.get("min", float(si[0]) - 3.0)
+    vmax = v.get("max", float(si[-1]) + 3.0)
+    num = int(v.get("num", 200))
+    return np.linspace(vmin, vmax, num)
+
+
+def _expand_surface_discrete_axis(points: np.ndarray, values: np.ndarray, axis: int, eps: float = 0.25):
+    if eps <= 0 or eps >= 0.5:
+        raise ValueError("Discrete surface epsilon must satisfy 0 < eps < 0.5")
+
+    expanded_points = []
+    if axis == 0:
+        expanded_values = np.zeros((values.shape[0], values.shape[1] * 3), dtype=float)
+        for j, p in enumerate(points):
+            expanded_points.extend([p - eps, p, p + eps])
+            expanded_values[:, 3 * j + 1] = values[:, j]
+        return np.asarray(expanded_points, dtype=float), expanded_values
+
+    expanded_values = np.zeros((values.shape[0] * 3, values.shape[1]), dtype=float)
+    for i, p in enumerate(points):
+        expanded_points.extend([p - eps, p, p + eps])
+        expanded_values[3 * i + 1, :] = values[i, :]
+    return np.asarray(expanded_points, dtype=float), expanded_values
+
+
 def plot_eed(
     eed: EED,
     specs: Sequence[SpecType],
@@ -100,12 +177,11 @@ def plot_eed(
     var_axes = [i for i, s in enumerate(parsed) if s.kind == "var"]
     if len(var_axes) > 2:
         raise ValueError("At most two variable dimensions are allowed")
-
     # Build fixed values and enum combinations
     enum_axes = [i for i, s in enumerate(parsed) if s.kind == "enum"]
     enum_lists = []
     for i in enum_axes:
-        enum_lists.append(_enum_points_for_axis(eed.S[i]))
+        enum_lists.append(_enum_points_for_axis(eed.S[i], eed.discrete_mask[i]))
 
     enum_combos = list(product(*enum_lists)) if enum_lists else [()]
 
@@ -138,21 +214,7 @@ def plot_eed(
 
     if len(var_axes) == 1:
         axis = var_axes[0]
-        if parsed[axis].value is None:
-            span = float(eed.S[axis][-1] - eed.S[axis][0])
-            ext = max(1.0, span * 0.5)
-            num = _auto_num(span + 2 * ext, min_n=80, max_n=600, scale=40.0)
-            var_spec = {
-                "min": float(eed.S[axis][0]) - ext,
-                "max": float(eed.S[axis][-1]) + ext,
-                "num": num,
-            }
-        else:
-            var_spec = parsed[axis].value if parsed[axis].kind == "var" else {}
-        vmin = var_spec.get("min", float(eed.S[axis][0]) - 3.0)
-        vmax = var_spec.get("max", float(eed.S[axis][-1]) + 3.0)
-        num = int(var_spec.get("num", 200))
-        xs = np.linspace(vmin, vmax, num)
+        xs = _var_points_for_axis(eed, axis, parsed[axis].value)
 
         fig = go.Figure()
         for combo in enum_combos:
@@ -167,43 +229,20 @@ def plot_eed(
                 x[axis] = float(xv)
                 ys.append(_eval_eed_at(eed, x))
             label = ", ".join(lbl for (lbl, _) in combo) if combo else None
-            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=label))
+            if eed.discrete_mask[axis]:
+                fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers", name=label))
+            else:
+                fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=label))
         fig.update_layout(xaxis_title=f"axis {axis}", yaxis_title="EED value")
         fig.show()
         return fig
 
     # len(var_axes) == 2
     ax0, ax1 = var_axes
-    if parsed[ax0].value is None:
-        span0 = float(eed.S[ax0][-1] - eed.S[ax0][0])
-        ext0 = max(1.0, span0 * 0.25)
-        num0 = _auto_num(span0 + 2 * ext0, min_n=40, max_n=240, scale=20.0)
-        v0 = {
-            "min": float(eed.S[ax0][0]) - ext0,
-            "max": float(eed.S[ax0][-1]) + ext0,
-            "num": num0,
-        }
-    else:
-        v0 = parsed[ax0].value if parsed[ax0].kind == "var" else {}
-    if parsed[ax1].value is None:
-        span1 = float(eed.S[ax1][-1] - eed.S[ax1][0])
-        ext1 = max(1.0, span1 * 0.25)
-        num1 = _auto_num(span1 + 2 * ext1, min_n=40, max_n=240, scale=20.0)
-        v1 = {
-            "min": float(eed.S[ax1][0]) - ext1,
-            "max": float(eed.S[ax1][-1]) + ext1,
-            "num": num1,
-        }
-    else:
-        v1 = parsed[ax1].value if parsed[ax1].kind == "var" else {}
-    x0_min = v0.get("min", float(eed.S[ax0][0]) - 3.0)
-    x0_max = v0.get("max", float(eed.S[ax0][-1]) + 3.0)
-    x1_min = v1.get("min", float(eed.S[ax1][0]) - 3.0)
-    x1_max = v1.get("max", float(eed.S[ax1][-1]) + 3.0)
-    n0 = int(v0.get("num", 100))
-    n1 = int(v1.get("num", 100))
-    xs = np.linspace(x0_min, x0_max, n0)
-    ys = np.linspace(x1_min, x1_max, n1)
+    xs = _var_points_for_axis(eed, ax0, parsed[ax0].value)
+    ys = _var_points_for_axis(eed, ax1, parsed[ax1].value)
+    n0 = len(xs)
+    n1 = len(ys)
     X, Y = np.meshgrid(xs, ys)
 
     rows = len(enum_combos)
@@ -230,11 +269,18 @@ def plot_eed(
                 x[ax1] = float(Y[i, j])
                 Z[i, j] = _eval_eed_at(eed, x)
         if mode == "surface":
+            plot_xs = xs
+            plot_ys = ys
+            plot_Z = Z
+            if eed.discrete_mask[ax0]:
+                plot_xs, plot_Z = _expand_surface_discrete_axis(plot_xs, plot_Z, axis=0)
+            if eed.discrete_mask[ax1]:
+                plot_ys, plot_Z = _expand_surface_discrete_axis(plot_ys, plot_Z, axis=1)
             fig.add_trace(
                 go.Surface(
-                    z=Z,
-                    x=xs,
-                    y=ys,
+                    z=plot_Z,
+                    x=plot_xs,
+                    y=plot_ys,
                     showscale=True,
                     colorbar=dict(title="EED"),
                     visible=(r == 1),
