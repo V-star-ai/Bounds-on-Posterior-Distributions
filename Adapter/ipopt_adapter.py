@@ -224,7 +224,7 @@ class IpoptAdapter(Adapter):
         P_val = np.vectorize(expr_to_float, otypes=[float])(eed_expr.P)
         alpha_val = [expr_to_float(a) for a in eed_expr.alpha]
         beta_val = [expr_to_float(b) for b in eed_expr.beta]
-        return type(eed_expr)(eed_expr.S, P_val, alpha_val, beta_val)
+        return type(eed_expr)(eed_expr.S, P_val, alpha_val, beta_val, eed_expr.discrete_mask)
 
     def var_max(self, a, b):
         # Not used in IpoptAdapter path (constraints evaluated from Expr directly).

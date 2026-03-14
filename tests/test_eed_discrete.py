@@ -5,6 +5,7 @@ from jedi.plugins import pytest
 
 from distributions import EED
 from Adapter.expr import Expr, Var
+from parsers.prior_parser import parse_prior_line
 
 
 def _make_mixed_eed():
@@ -196,6 +197,22 @@ def test_assign_eed_preserves_expr_values():
 
     assert isinstance(out.P[0], Expr)
     assert isinstance(out.P[1], Expr)
+
+
+def test_align_to_discrete_uses_geometric_tails():
+    eed = EED([[0]], np.array([2.0], dtype=float), [0.5], [0.25], [True])
+    g = eed.align_to([[-2, -1, 0, 1, 2]])
+
+    assert np.allclose(g.P, [0.5, 1.0, 2.0, 0.5, 0.125])
+
+
+def test_parse_mapping_uses_exact_discrete_support():
+    vars_tuple, dist = parse_prior_line("x={0:1.0}")
+
+    assert vars_tuple == ("x",)
+    assert dist.S[0].tolist() == [0]
+    assert np.allclose(dist.P, [1.0])
+    assert dist.discrete_mask == [True]
 
 if __name__ == "__main__":
     test_restrict_interval_discrete()

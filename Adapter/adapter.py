@@ -165,7 +165,7 @@ class Adapter(ABC):
         P_val = np.vectorize(expr_to_float, otypes=[float])(eed_expr.P)
         alpha_val = [expr_to_float(a) for a in eed_expr.alpha]
         beta_val = [expr_to_float(b) for b in eed_expr.beta]
-        return EED(eed_expr.S, P_val, alpha_val, beta_val)
+        return EED(eed_expr.S, P_val, alpha_val, beta_val, eed_expr.discrete_mask)
 
     def restrict_leq(self, eed1, eed2, envs: AdapterEnvs) -> AdapterEnvs:
         c = EED.leq(
@@ -174,4 +174,3 @@ class Adapter(ABC):
         )
         envs.constraints_list += c
         return envs
-

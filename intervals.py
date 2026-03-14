@@ -1,3 +1,4 @@
+from fractions import Fraction
 from typing import List, Tuple, Optional
 
 Interval = Tuple[Optional[int], Optional[int]]
@@ -7,12 +8,11 @@ def const_int_value(expr):
     from probably.pgcl.ast.expressions import NatLitExpr, RealLitExpr
 
     if isinstance(expr, NatLitExpr):
-        return int(expr.value)
+        return Fraction(expr.value)
     if isinstance(expr, RealLitExpr):
         fr = expr.to_fraction()
-        if fr.denominator == 1:
-            return int(fr.numerator)
-    raise ValueError("If condition constant must be an integer literal")
+        return fr
+    raise ValueError("If condition constant must be an fraction literal")
 
 
 def interval_union(a: List[Interval], b: List[Interval]) -> List[Interval]:

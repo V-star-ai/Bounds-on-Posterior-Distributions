@@ -64,7 +64,9 @@ class EED:
 
     P:
       - Continuous dimension: length = len(S_i) + 1 (with boundary rings).
-      - Discrete dimension: length = len(S_i) (point masses).
+      - Discrete dimension: length = len(S_i) (point masses on the listed support).
+        Values outside [S_i[0], S_i[-1]] decay geometrically from the boundary
+        masses using alpha/beta. Missing interior integer points have mass 0.
 
     alpha/beta:
       - Only meaningful for continuous dimensions (0 <= < 1).
@@ -162,14 +164,29 @@ class EED:
                 raise ValueError(f"第 {axis} 维 S_old 不完全包含于 S_new，缺少断点: {missing}")
 
             if self.discrete_mask[axis]:
-                # discrete axis: map point masses; new points -> 0
                 idx = []
+                factors = []
                 so_list = list(so.tolist())
                 index_map = {v: i for i, v in enumerate(so_list)}
+                left_boundary = so_list[0]
+                right_boundary = so_list[-1]
+                last_idx = len(so_list) - 1
                 for v in sn.tolist():
-                    idx.append(index_map.get(v, -1))
+                    if v in index_map:
+                        idx.append(index_map[v])
+                        factors.append(1)
+                    elif v < left_boundary:
+                        idx.append(0)
+                        factors.append(_pow_array(self.alpha[axis], [left_boundary - v])[0])
+                    elif v > right_boundary:
+                        idx.append(last_idx)
+                        factors.append(_pow_array(self.beta[axis], [v - right_boundary])[0])
+                    else:
+                        # Interior holes stay zero even after refinement.
+                        idx.append(0)
+                        factors.append(0)
                 idx_list.append(np.array(idx, dtype=int))
-                factor_list.append(None)
+                factor_list.append(np.asarray(factors, dtype=object))
             else:
                 b = so[0]
                 e = so[-1]
@@ -215,18 +232,7 @@ class EED:
         # --- 拉伸旧 P 到新网格
         P_new = self.P
         for axis in range(self.n):
-            if self.discrete_mask[axis]:
-                idx = idx_list[axis]
-                idx_clip = np.where(idx >= 0, idx, 0)
-                P_new = np.take(P_new, idx_clip, axis=axis)
-                # zero out newly introduced points
-                missing = np.where(idx < 0)[0]
-                for mi in missing:
-                    slicer = [slice(None)] * P_new.ndim
-                    slicer[axis] = mi
-                    P_new[tuple(slicer)] = 0
-            else:
-                P_new = np.take(P_new, idx_list[axis], axis=axis)
+            P_new = np.take(P_new, idx_list[axis], axis=axis)
 
         # --- 乘上连续维度衰减因子
         extra = P_new.ndim - self.n
@@ -659,6 +665,14 @@ class EED:
             for point_idx in range(len(self.S[axis])):
                 idx[axis] = point_idx
                 mass = mass + self.P[tuple(idx)]
+            left_rate = self.alpha[axis]
+            right_rate = self.beta[axis]
+            if left_rate != 0:
+                idx[axis] = 0
+                mass = mass + self.P[tuple(idx)] * left_rate / (1 - left_rate)
+            if right_rate != 0:
+                idx[axis] = len(self.S[axis]) - 1
+                mass = mass + self.P[tuple(idx)] * right_rate / (1 - right_rate)
             return mass
 
         si = self.S[axis]
