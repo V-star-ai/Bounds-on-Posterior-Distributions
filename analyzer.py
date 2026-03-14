@@ -25,7 +25,7 @@ class ProgramStructure:
         self.var_map = {self.var_order[i] : i for i in range(len(self.var_order))}
         self.ctx_eed = deepcopy(self.ori_eed)
 
-    def solve_eed(self, adapter : Adapter):
+    def solve_eed(self, adapter : Adapter, method="Park"): # method = "Park" | "Diabolo"
         """
         Traverse self.disc_prog (pgcl AST) and enforce assignments are x := x + c.
         For each valid assignment, apply self.ctx_eed.add_constant(var_index, c).
@@ -139,27 +139,47 @@ class ProgramStructure:
             elif isinstance(instr, WhileInstr):
                 if isinstance(instr.cond, RealLitExpr):
                     restrict = lambda eed: eed.times_constant(instr.cond.value)
+                    restrict_neg = lambda eed: eed.times_constant(1. - instr.cond.value)
                 else:
                     var_name, intervals = validate_if_condition(instr.cond)
                     walk_expr(instr.cond)
                     restrict = lambda eed: eed.restrict_interval(self.var_map[var_name], intervals,
                                                      max_function = Expr.max if solver else None)
+                    neg_intervals = interval_complement(intervals)
+                    restrict_neg = lambda eed: eed.restrict_interval(self.var_map[var_name], neg_intervals,
+                                                     max_function = Expr.max if solver else None)
 
                 need_solve = solver is None
+                self_while_counter = while_counter
+                while_counter += 1
 
                 # test
                 test_eed = restrict(ctx_eed)
                 for s in instr.body:
                     test_eed = walk_instr(s, test_eed, solver)
 
-                # solve
                 merged_S = [EED.merge_breakpoints(s1, s2, -1) for (s1, s2) in zip(ctx_eed.S, test_eed.S)]
-                ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S, name_prefix=f"w{while_counter}")
-                while_counter += 1
-                true_eed = restrict(ctx_eed)
-                for s in instr.body:
-                    true_eed = walk_instr(s, true_eed, solver)
-                solver = adapter.restrict_leq(true_eed, ctx_eed, solver)
+
+                # solve
+                if method == "Park":
+                    ori_eed = deepcopy(ctx_eed)
+                    ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S, name_prefix=f"w{self_while_counter}")
+                    true_eed = restrict(ctx_eed)
+                    for s in instr.body:
+                        true_eed = walk_instr(s, true_eed, solver)
+                    solver = adapter.restrict_leq(EED.add(true_eed, ori_eed, max_function=Expr.max), ctx_eed, solver)
+                    ctx_eed = restrict_neg(ctx_eed)
+                elif method == "Diabolo":
+                    ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S, name_prefix=f"w{self_while_counter}")
+                    c = adapter.get_var_expr(f"c_w{self_while_counter}", solver)
+                    solver.constraints_list.append(0 < c)
+                    solver.constraints_list.append(c < 1)
+                    true_eed = restrict(ctx_eed)
+                    for s in instr.body:
+                        true_eed = walk_instr(s, true_eed, solver)
+                    solver = adapter.restrict_leq(true_eed, ctx_eed.times_constant(c), solver)
+                    ctx_eed = restrict_neg(ctx_eed).times_constant(1. / (1. - c))
+
                 if need_solve:
                     ctx_eed = adapter.solve_expr(ctx_eed, solver)
             elif isinstance(instr, IfInstr):

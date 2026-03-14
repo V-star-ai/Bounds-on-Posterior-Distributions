@@ -52,7 +52,7 @@ simple_test2 = '''
 prog = ProgramStructure(simple_test1)
 print(prog.prog)
 print(prog.var_order)
-result = prog.solve_eed(IpoptAdapter())
+result = prog.solve_eed(IpoptAdapter(), method="Diabolo")
 print(result.S)
 print(result.P)
 print(result.alpha)
