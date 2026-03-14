@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from _ast import Lt
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, Sequence
 from enum import Enum
 
 from fractions import Fraction
@@ -93,7 +93,7 @@ class Const(Expr):
     def __init__(self, val):
         if isinstance(val, Expr):
             raise TypeError(val)
-        self.value = val
+        self.value = float(val)
 
     def eval(self, env):
         return self.value

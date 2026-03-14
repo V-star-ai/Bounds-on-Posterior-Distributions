@@ -77,10 +77,13 @@ class ProgramStructure:
                 lhs_name = instr.lhs
                 rhs = instr.rhs
 
-                if not isinstance(rhs, BinopExpr) or rhs.operator not in (Binop.PLUS, Binop.MINUS):
-                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c")
+                if (not isinstance(rhs, BinopExpr) or rhs.operator not in (Binop.PLUS, Binop.MINUS)) and \
+                    not isinstance(rhs, EED):
+                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
 
-                if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name and isinstance(rhs.rhs,
+                if isinstance(rhs, EED):
+                    c = rhs
+                elif isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name and isinstance(rhs.rhs,
                                                                                            (NatLitExpr, RealLitExpr)):
                     c = const_value(rhs.rhs)
                     if rhs.operator == Binop.MINUS:
@@ -91,7 +94,7 @@ class ProgramStructure:
                         raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c")
                     c = const_value(rhs.lhs)
                 else:
-                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c")
+                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
 
                 if lhs_name not in self.var_map:
                     raise ValueError(f"Unknown variable in assignment: {lhs_name}")
@@ -123,29 +126,42 @@ class ProgramStructure:
             elif isinstance(expr, (VarExpr, NatLitExpr, RealLitExpr)):
                 pass
 
+        while_counter = 0
+
         def walk_instr(instr, ctx_eed, solver = None):
+            nonlocal while_counter
             if isinstance(instr, AsgnInstr):
                 lhs_name, c = validate_assignment(instr)
-                ctx_eed = ctx_eed.add_constant(self.var_map[lhs_name], c)
+                if isinstance(c, EED):
+                    ctx_eed = ctx_eed.assign_eed(self.var_map[lhs_name], c, approximate_step=0.1)
+                else:
+                    ctx_eed = ctx_eed.add_constant(self.var_map[lhs_name], c)
             elif isinstance(instr, WhileInstr):
-                var_name, intervals = validate_if_condition(instr.cond)
-                walk_expr(instr.cond)
+                if isinstance(instr.cond, RealLitExpr):
+                    restrict = lambda eed: eed.times_constant(instr.cond.value)
+                else:
+                    var_name, intervals = validate_if_condition(instr.cond)
+                    walk_expr(instr.cond)
+                    restrict = lambda eed: eed.restrict_interval(self.var_map[var_name], intervals,
+                                                     max_function = Expr.max if solver else None)
+
+                need_solve = solver is None
 
                 # test
-                test_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                     max_function = Expr.max if solver else None)
+                test_eed = restrict(ctx_eed)
                 for s in instr.body:
                     test_eed = walk_instr(s, test_eed, solver)
 
                 # solve
                 merged_S = [EED.merge_breakpoints(s1, s2, -1) for (s1, s2) in zip(ctx_eed.S, test_eed.S)]
-                ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S)
-                true_eed = ctx_eed.restrict_interval(self.var_map[var_name], intervals,
-                                                     max_function = Expr.max if solver else None)
+                ctx_eed, solver = adapter.build_leq(ctx_eed, merged_S, name_prefix=f"w{while_counter}")
+                while_counter += 1
+                true_eed = restrict(ctx_eed)
                 for s in instr.body:
                     true_eed = walk_instr(s, true_eed, solver)
                 solver = adapter.restrict_leq(true_eed, ctx_eed, solver)
-                ctx_eed = adapter.solve_expr(ctx_eed, solver)
+                if need_solve:
+                    ctx_eed = adapter.solve_expr(ctx_eed, solver)
             elif isinstance(instr, IfInstr):
                 var_name, intervals = validate_if_condition(instr.cond)
                 neg_intervals = interval_complement(intervals)

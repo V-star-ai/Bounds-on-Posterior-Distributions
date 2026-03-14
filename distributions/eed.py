@@ -719,7 +719,7 @@ class EED:
                 dst_index[other_axis] = value
 
             mass = self._axis_slice_mass(axis, src_index, approximate_step, ln)
-            P_new[tuple(dst_index)] = mass * eed.P
+            P_new[tuple(dst_index)] = eed.P * mass
 
         S_new = [arr.copy() for arr in self.S]
         S_new[axis] = eed.S[0].copy()
