@@ -76,12 +76,15 @@ class Adapter(ABC):
         return self.ensure_var(a) / self.ensure_var(b)
 
     def var_pow(self, a, b):
+        return self.ensure_var(a) ** self.ensure_var(b)
+
+    def safe_pow(self, a, b):
         if isinstance(b, (int, float, Fraction, np.number)):
             if b == 0:
                 return self.ensure_var(1)
             if b == 1:
                 return self.ensure_var(a)
-        return self.ensure_var(a) ** self.ensure_var(b)
+        return self.var_pow(a, b)
 
     @abstractmethod
     def var_max(self, a, b):
@@ -123,7 +126,7 @@ class Adapter(ABC):
         elif isinstance(expr, Max):
             return self.var_max(self.walk_expr(expr.left, vars), self.walk_expr(expr.right, vars))
         elif isinstance(expr, Pow):
-            return self.var_pow(self.walk_expr(expr.left, vars), self.walk_expr(expr.right, vars))
+            return self.safe_pow(self.walk_expr(expr.left, vars), self.walk_expr(expr.right, vars))
 
         raise TypeError(expr)
 
