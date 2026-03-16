@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Tuple
+from fractions import Fraction
 
 from distributions import EED
 from abc import ABC, abstractmethod
@@ -75,6 +76,11 @@ class Adapter(ABC):
         return self.ensure_var(a) / self.ensure_var(b)
 
     def var_pow(self, a, b):
+        if isinstance(b, (int, float, Fraction, np.number)):
+            if b == 0:
+                return self.ensure_var(1)
+            if b == 1:
+                return self.ensure_var(a)
         return self.ensure_var(a) ** self.ensure_var(b)
 
     @abstractmethod
