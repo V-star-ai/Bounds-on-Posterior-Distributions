@@ -113,6 +113,16 @@ def _auto_num(span: float, *, min_n: int, max_n: int, scale: float) -> int:
     return n
 
 
+def _safe_show(fig):
+    try:
+        fig.show()
+    except (PermissionError, OSError):
+        # Some sandboxed environments disallow the ephemeral local server that
+        # Plotly uses for browser rendering. Keep returning the figure instead.
+        return fig
+    return fig
+
+
 def _var_points_for_axis(eed: EED, axis: int, spec_value: Any):
     si = eed.S[axis]
     if eed.discrete_mask[axis]:
@@ -234,8 +244,7 @@ def plot_eed(
             else:
                 fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=label))
         fig.update_layout(xaxis_title=f"axis {axis}", yaxis_title="EED value")
-        fig.show()
-        return fig
+        return _safe_show(fig)
 
     # len(var_axes) == 2
     ax0, ax1 = var_axes
@@ -332,5 +341,4 @@ def plot_eed(
         )
     else:
         fig.update_layout(title=titles[0])
-    fig.show()
-    return fig
+    return _safe_show(fig)

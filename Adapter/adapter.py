@@ -109,6 +109,8 @@ class Adapter(ABC):
         return self.ensure_var(a) >= self.ensure_var(b)
 
     def walk_expr(self, expr : Expr, vars : dict):
+        # if not isinstance(expr, Expr):
+        #     return self.ensure_var(expr)
         if isinstance(expr, Var):
             return vars[expr.name]
         elif isinstance(expr, Const):
@@ -142,6 +144,8 @@ class Adapter(ABC):
         raise TypeError(constraint)
 
     def eval_expr(self, expr : Expr, vars : dict) -> float:
+        # if not isinstance(expr, Expr):
+        #     return float(expr)
         if isinstance(expr, Var):
             return vars[expr.name]
         elif isinstance(expr, Const):
