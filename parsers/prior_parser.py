@@ -138,25 +138,30 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
             dist_obj = Exponential(*args)
 
     else:
-        mapping = parse_mapping_string(rhs)
+    else:
+        if '{' in rhs:
+            mapping = parse_mapping_string(rhs)
 
-        if not mapping:
-            raise ValueError("Discrete distribution mapping must not be empty.")
+            if not mapping:
+                raise ValueError("Discrete distribution mapping must not be empty.")
 
-        # Infer dimension
-        n = len(next(iter(mapping)))
+            # Infer dimension
+            n = len(next(iter(mapping)))
 
-        # Build S from the exact per-dimension support values.
-        # Geometric tails outside the listed support are represented by alpha/beta.
-        S = [sorted({pt[i] for pt in mapping}) for i in range(n)]
-        P = np.zeros(tuple(len(si) for si in S), dtype=float)
+            # Build S from the exact per-dimension support values.
+            S = [sorted({pt[i] for pt in mapping}) for i in range(n)]
+            
+            P = np.zeros(tuple(len(si) for si in S), dtype=float)
+            # Fill probability table
+            for pt, prob in mapping.items():
+                idx = tuple(S[i].index(pt[i]) for i in range(n))
+                P[idx] = prob
 
-        # Fill probability table
-        for pt, prob in mapping.items():
-            idx = tuple(S[i].index(pt[i]) for i in range(n))
-            P[idx] = prob
-
-        dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
+            dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
+            
+        else:
+            num = parse_number(rhs)
+            dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
 
     return vars_tuple, dist_obj
 
