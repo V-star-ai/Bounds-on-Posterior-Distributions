@@ -87,9 +87,14 @@ def reverse_replace_distributions(syntax_tree: Any, distribution_map: dict[str, 
         reverse_replace_distributions(syntax_tree.rhs, distribution_map)
 
     elif isinstance(syntax_tree, AsgnInstr):
-        # Only replace if RHS is a placeholder variable: VarExpr("distribution_i").
+        # Replace placeholder variable: VarExpr("distribution_i").
         if isinstance(syntax_tree.rhs, VarExpr) and re.match(r"^distribution_\d+$", syntax_tree.rhs.var):
             syntax_tree.rhs = distribution_map[syntax_tree.rhs.var]
+        elif isinstance(syntax_tree.rhs, BinopExpr):
+            if isinstance(syntax_tree.rhs.lhs, VarExpr) and re.match(r"^distribution_\d+$", syntax_tree.rhs.lhs.var):
+                syntax_tree.rhs.lhs = distribution_map[syntax_tree.rhs.lhs.var]
+            if isinstance(syntax_tree.rhs.rhs, VarExpr) and re.match(r"^distribution_\d+$", syntax_tree.rhs.rhs.var):
+                syntax_tree.rhs.rhs = distribution_map[syntax_tree.rhs.rhs.var]
 
 
 def parse_program(program_str: str) -> Program:
