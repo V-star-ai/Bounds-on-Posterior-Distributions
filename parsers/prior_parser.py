@@ -71,9 +71,10 @@ def parse_mapping_string(s: str):
     return result
 
 
-def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
+def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
     """
     Parse one prior assignment line, e.g.
+      "x=0"
       "x=Normal(0,1)"
       "x=Uniform(0,1)"
       "x=Exponential(1)"
@@ -87,13 +88,13 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
     if not line:
         return tuple(), None
 
-    # local registry (edit here when adding new distributions)
-    DIST_NAMES = ("Normal", "Uniform", "Exponential", "EED")
-
     # split into LHS and RHS around '='
     lhs, rhs = line.split("=", 1)
     if not lhs:
         raise ValueError("Missing variable(s) on the left-hand side.")
+
+    # local registry (edit here when adding new distributions)
+    DIST_NAMES = ("Normal", "Uniform", "Exponential", "EED")
 
     # ensure no more than one distribution name occurs
     hits = [name for name in DIST_NAMES if name in rhs]
@@ -101,11 +102,27 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
         raise ValueError("A line must not contain more than one distribution name.")
     dist_name = hits[0] if hits else None
 
+    if mode == 'lower':
+        if ',' in lhs:
+            raise ValueError("Lower bound mode currently does not support joint distributions in prior.")
+        if dist_name:
+            return lhs, rhs
+        else:
+            if '{' in rhs:
+                mapping = parse_mapping_string(rhs)
+                if not mapping:
+                    raise ValueError("Discrete distribution mapping must not be empty.")
+                return lhs, mapping
+                
+            else:
+                num = parse_number(rhs)
+                return lhs, num
+
     vars_tuple = tuple(v for v in lhs.split(",") if v)
     if not vars_tuple:
         raise ValueError("No variables found on the left-hand side.")
 
-    if dist_name is not None:
+    if dist_name:
         rhs = rhs.replace(dist_name, "", 1)
 
         if not (rhs.startswith("(") and rhs.endswith(")")):
@@ -138,7 +155,6 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
             dist_obj = Exponential(*args)
 
     else:
-    else:
         if '{' in rhs:
             mapping = parse_mapping_string(rhs)
 
@@ -160,13 +176,13 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
             dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
             
         else:
-            num = parse_number(rhs)
+            num = parse_number(rhs, 'fraction')
             dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
 
     return vars_tuple, dist_obj
 
 
-def parse_prior(prior):
+def parse_prior(prior: str, mode: str):
     """Parse the prior section into a dict mapping vars_tuple to a distribution instance."""
 
     prior_items = re.split(r"[\n;]+", prior)
