@@ -5,7 +5,7 @@ from fractions import Fraction
 from typing import Tuple, Union
 
 from parsers.parser_utils import parse_number, parse_object_sequence_string, split_top_level
-from distributions import Normal, Uniform, Exponential, EED
+from distributions import Normal, Uniform, Exponential
 
 
 def parse_mapping_string(s: str):
