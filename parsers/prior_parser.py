@@ -71,7 +71,7 @@ def parse_mapping_string(s: str):
     return result
 
 
-def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
+def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
     """
     Parse one prior assignment line, e.g.
       "x=0"
@@ -79,7 +79,6 @@ def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Norma
       "x=Uniform(0,1)"
       "x=Exponential(1)"
       "x={0:0.2,1:0.5,3:0.3}"
-      "x,y=EED([[0,1],[0,1/2]],[[0.2,0.1,0.3],[0.1,0.4,0.1]],[0.1,0.2],[0.3,0.4])"
 
     Returns: (vars_tuple, dist_instance)
     """
@@ -94,29 +93,13 @@ def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Norma
         raise ValueError("Missing variable(s) on the left-hand side.")
 
     # local registry (edit here when adding new distributions)
-    DIST_NAMES = ("Normal", "Uniform", "Exponential", "EED")
+    DIST_NAMES = ("Normal", "Uniform", "Exponential")
 
     # ensure no more than one distribution name occurs
     hits = [name for name in DIST_NAMES if name in rhs]
     if len(hits) > 1:
         raise ValueError("A line must not contain more than one distribution name.")
     dist_name = hits[0] if hits else None
-
-    if mode == 'lower':
-        if ',' in lhs:
-            raise ValueError("Lower bound mode currently does not support joint distributions in prior.")
-        if dist_name:
-            return lhs, rhs
-        else:
-            if '{' in rhs:
-                mapping = parse_mapping_string(rhs)
-                if not mapping:
-                    raise ValueError("Discrete distribution mapping must not be empty.")
-                return lhs, mapping
-                
-            else:
-                num = parse_number(rhs)
-                return lhs, num
 
     vars_tuple = tuple(v for v in lhs.split(",") if v)
     if not vars_tuple:
@@ -129,20 +112,7 @@ def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Norma
             raise ValueError(f"Expected '{dist_name}(...)'.")
         args_str = rhs[1:-1]
 
-        if dist_name == "EED":
-            args = parse_object_sequence_string(args_str, {0: "fraction"})
-            n = len(args[0])
-
-            if len(args) == 4:
-                dist_obj = EED(*args)
-            elif len(args) == 5:
-                discrete_dims = set(args[4])
-                args[4] = [any(x == i for x in discrete_dims) for i in range(n)]
-                dist_obj = EED(*args)
-            else:
-                raise ValueError("EED expects 4 or 5 arguments in the input string.")
-
-        elif dist_name == "Normal":
+        if dist_name == "Normal":
             args = parse_object_sequence_string(args_str)
             dist_obj = Normal(*args)
 
@@ -156,33 +126,18 @@ def parse_prior_line(line: str, mode: str) -> Tuple[Tuple[str, ...], Union[Norma
 
     else:
         if '{' in rhs:
-            mapping = parse_mapping_string(rhs)
+            dist_obj = parse_mapping_string(rhs)
 
-            if not mapping:
+            if not dist_obj:
                 raise ValueError("Discrete distribution mapping must not be empty.")
-
-            # Infer dimension
-            n = len(next(iter(mapping)))
-
-            # Build S from the exact per-dimension support values.
-            S = [sorted({pt[i] for pt in mapping}) for i in range(n)]
-            
-            P = np.zeros(tuple(len(si) for si in S), dtype=float)
-            # Fill probability table
-            for pt, prob in mapping.items():
-                idx = tuple(S[i].index(pt[i]) for i in range(n))
-                P[idx] = prob
-
-            dist_obj = EED(S, P, [0] * n, [0] * n, [True] * n)
             
         else:
-            num = parse_number(rhs, 'fraction')
-            dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
+            dist_obj = parse_number(rhs)
 
     return vars_tuple, dist_obj
 
 
-def parse_prior(prior: str, mode: str):
+def parse_prior(prior: str):
     """Parse the prior section into a dict mapping vars_tuple to a distribution instance."""
 
     prior_items = re.split(r"[\n;]+", prior)
