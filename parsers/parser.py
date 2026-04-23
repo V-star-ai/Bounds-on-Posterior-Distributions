@@ -20,9 +20,9 @@ def split_program(src_str: str) -> Tuple[str, str]:
     if not m:
         raise ValueError("Invalid format: expected 'prior: ... program: ...'")
 
-    prior = m.group(1)
-    program = m.group(2)
-    return prior, program
+    prior_str = m.group(1)
+    program_str = m.group(2)
+    return prior_str, program_str
 
 
 def parse_src(src_str: str) -> Tuple[dict, Program]:
