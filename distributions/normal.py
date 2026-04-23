@@ -8,6 +8,13 @@ from distributions import EED
 
 class Normal:
     def __init__(self, mean: Sequence[float], cov: Sequence[Sequence[float]]):
+        
+        # Check the validity of cov and prevent the normal from degenerating into a discrete distribution
+        for row in cov:
+            for value in row:
+                if value <= 0:
+                    raise ValueError("Invalid covariance matrix")
+
         # Normalize inputs
         self.mean = np.asarray(mean, dtype=float)
         self.cov = np.asarray(cov, dtype=float)
