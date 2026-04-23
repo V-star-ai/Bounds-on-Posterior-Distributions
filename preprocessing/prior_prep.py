@@ -1,5 +1,6 @@
 from typing import Sequence, Dict, Tuple, Union
 import numpy as np
+from fractions import Fraction
 from distributions import EED, Normal, Exponential, Uniform
 
 
@@ -41,7 +42,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     )
 
 
-def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]) -> Tuple[Tuple[str, ...], EED]:
+def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential, Dict]]) -> Tuple[Tuple[str, ...], EED]:
     """
     Merge a prior dict into a var tuple and a single joint EED.
 
@@ -63,9 +64,26 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential,
             dist = dist.to_eed()
         elif isinstance(dist, (Uniform, Exponential)):
             dist = dist.to_eed()
-        else:
-            raise TypeError(f"Unsupported prior distribution type: {type(dist).__name__}")
+        elif isinstance(dist, Dict):
+            # Infer dimension
+            n = len(next(iter(dist)))
+
+            # Build S from the exact per-dimension support values.
+            S = [sorted({pt[i] for pt in dist}) for i in range(n)]
             
+            P = np.zeros(tuple(len(si) for si in S), dtype=float)
+            # Fill probability table
+            for pt, prob in dist.items():
+                idx = tuple(S[i].index(pt[i]) for i in range(n))
+                P[idx] = prob
+
+            dist = EED(S, P, [0] * n, [0] * n, [True] * n)
+
+        else:
+            #If it is not one of the above categories, it means number.
+            num = Fraction(dist)
+            dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
+
         eeds.append(dist)
 
     merged_vars = tuple(vars_merged)
