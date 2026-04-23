@@ -9,11 +9,9 @@ from distributions import EED
 class Normal:
     def __init__(self, mean: Sequence[float], cov: Sequence[Sequence[float]]):
         
-        # Check the validity of cov and prevent the normal from degenerating into a discrete distribution
-        for row in cov:
-            for value in row:
-                if value <= 0:
-                    raise ValueError("Invalid covariance matrix")
+        # Check the validity of cov
+        if any(v < 0 for r in cov for v in r) or all(v == 0 for r in cov for v in r):
+            raise ValueError("Invalid covariance matrix")
 
         # Normalize inputs
         self.mean = np.asarray(mean, dtype=float)
