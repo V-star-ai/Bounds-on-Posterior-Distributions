@@ -25,7 +25,7 @@ def split_program(src_str: str) -> Tuple[str, str]:
     return prior_str, program_str
 
 
-def parse_src(src_str: str) -> Tuple[dict, Program]:
+def parse_src(src_str: str, mode: str) -> Tuple[dict, Program]:
     """
     Parse a full DSL source into (prior_dict, pgcl_program), where prior_dict maps
     tuples of variable names to their initial priors, and pgcl_program is the parsed pGCL AST.
@@ -45,10 +45,13 @@ def parse_src(src_str: str) -> Tuple[dict, Program]:
             x2:=Normal(0,1)
         }else{
             x4:=x4+1
-            x5:=Uniform(0,1)
+            x5:=x5+Uniform(0,1)
         }
     }
     """
+    
+    if mode not in {"lower", "upper"}:
+        raise ValueError(f"mode must be 'lower' or 'upper', got {mode}")
 
     prior_str, program_str = split_program(src_str)
-    return parse_prior(prior_str), parse_program(program_str)
+    return parse_prior(prior_str, mode), parse_program(program_str, mode)
