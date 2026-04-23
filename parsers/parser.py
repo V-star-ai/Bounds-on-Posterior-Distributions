@@ -25,33 +25,14 @@ def split_program(src_str: str) -> Tuple[str, str]:
     return prior_str, program_str
 
 
-def parse_src(src_str: str, mode: str) -> Tuple[dict, Program]:
+def parse_src(src_str: str) -> Tuple[dict, dict, Program]:
     """
-    Parse a full DSL source into (prior_dict, pgcl_program), where prior_dict maps
-    tuples of variable names to their initial priors, and pgcl_program is the parsed pGCL AST.
-
-    Example input:
-
-    prior:
-    x1 = Normal(0,1)
-    x2 = Uniform(0,1)
-    x3 = Exponential(1)
-    x4 = {0: 0.2, 1: 0.5, 2: 0.3}
-    x5,x6 = EED([[0,1/2],[0,1]],[[0.2,0.3,0.3],[0.1,0.5,0.2],[0.2,0.1,0.1]],[0.3,0.2],[0.4,0.6])
-    program:
-    while(1/3){
-        if(x3>0.5){
-            x1:=Exponential(2)
-            x2:=Normal(0,1)
-        }else{
-            x4:=x4+1
-            x5:=x5+Uniform(0,1)
-        }
-    }
+    Parse a full DSL source into (prior_dict, replacement_map, pgcl_program), where prior_dict maps
+    tuples of variable names to their initial priors, replacement_map maps placeholders in the program 
+    to corresponding distribution instancesand, and pgcl_program is the parsed pGCL AST.
     """
     
-    if mode not in {"lower", "upper"}:
-        raise ValueError(f"mode must be 'lower' or 'upper', got {mode}")
-
     prior_str, program_str = split_program(src_str)
-    return parse_prior(prior_str, mode), parse_program(program_str, mode)
+    prior_dict = parse_prior(prior_str)
+    replacement_map, pgcl_program = parse_program(program_str)
+    return prior_dict, replacement_map, pgcl_program
