@@ -75,28 +75,29 @@ def collect_continualized_vars(syntax_tree: Any, conted_vars: set[str]):
         collect_continualized_vars(syntax_tree.rhs, conted_vars)
 
     elif isinstance(syntax_tree, AsgnInstr):
-        rhs_expr = syntax_tree.rhs
         target_var = syntax_tree.lhs.var
-        has_dist_placeholder = False
+        if target_var not in conted_vars:
+            rhs_expr = syntax_tree.rhs
+            has_dist_placeholder = False
 
-        # Check direct distribution placeholder VarExpr
-        if isinstance(rhs_expr, VarExpr):
-            if re.match(r"^distribution_\d+$", rhs_expr.var):
-                has_dist_placeholder = True
+            # Check direct distribution placeholder VarExpr
+            if isinstance(rhs_expr, VarExpr):
+                if re.match(r"^distribution_\d+$", rhs_expr.var):
+                    has_dist_placeholder = True
 
-        # Check distribution placeholder in BinopExpr lhs / rhs
-        elif isinstance(rhs_expr, BinopExpr):
-            if isinstance(rhs_expr.lhs, VarExpr) and re.match(r"^distribution_\d+$", rhs_expr.lhs.var):
-                has_dist_placeholder = True
-            if isinstance(rhs_expr.rhs, VarExpr) and re.match(r"^distribution_\d+$", rhs_expr.rhs.var):
-                has_dist_placeholder = True
+            # Check distribution placeholder in BinopExpr lhs / rhs
+            elif isinstance(rhs_expr, BinopExpr):
+                if isinstance(rhs_expr.lhs, VarExpr) and re.match(r"^distribution_\d+$", rhs_expr.lhs.var):
+                    has_dist_placeholder = True
+                if isinstance(rhs_expr.rhs, VarExpr) and re.match(r"^distribution_\d+$", rhs_expr.rhs.var):
+                    has_dist_placeholder = True
 
-        # Add lhs variable to continualized set if placeholder exists
-        if has_dist_placeholder:
-            conted_vars.add(target_var)
+            # Add lhs variable to continualized set if placeholder exists
+            if has_dist_placeholder:
+                conted_vars.add(target_var)
 
 
-def parse_program(program_str: str) -> tuple[dict, Program]:
+def parse_program(program_str: str) -> tuple[Program, dict, set]:
     """
     Parse a program block of the DSL into a pGCL program.
 
