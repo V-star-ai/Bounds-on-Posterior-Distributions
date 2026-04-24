@@ -1,4 +1,4 @@
-from typing import Sequence, Dict, Tuple, Union
+from typing import Sequence, Any
 import numpy as np
 from fractions import Fraction
 from distributions import EED, Normal, Exponential, Uniform
@@ -42,7 +42,7 @@ def merge_eed(eeds: Sequence[EED]) -> EED:
     )
 
 
-def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential, Dict]]) -> Tuple[Tuple[str, ...], EED]:
+def merge_prior(prior: dict[tuple[str, ...], Any], conted_vars: set[str]) -> tuple[tuple[str, ...], EED]:
     """
     Merge a prior dict into a var tuple and a single joint EED.
 
@@ -51,6 +51,7 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential,
     corresponding distributions are first converted to EED (if needed)
     and then merged in the same order.
     """
+    
     vars_merged: list[str] = []
     eeds: list[EED] = []
 
@@ -82,7 +83,11 @@ def merge_prior(prior: Dict[Tuple[str, ...], Union[Normal, Uniform, Exponential,
         else:
             #If it is not one of the above categories, it means number.
             num = Fraction(dist)
-            dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
+
+            if var_tuple[0] in conted_vars:
+                dist_obj = EED([[num]], [0, 1, 0], [0], [0], [False])
+            else:
+                dist_obj = EED([[num - 1, num, num + 1]], [0, 1, 0], [0], [0], [True])
 
         eeds.append(dist)
 
