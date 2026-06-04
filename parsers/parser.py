@@ -1,5 +1,5 @@
 import re
-from typing import Any, Tuple
+from typing import Tuple
 from probably.pgcl.ast import Program
 from parsers.prior_parser import parse_prior
 from parsers.program_parser import parse_program
