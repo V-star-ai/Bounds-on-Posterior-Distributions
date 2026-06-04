@@ -1,11 +1,7 @@
 import re
-import numpy as np
-
 from fractions import Fraction
-from typing import Tuple, Union
-
+from typing import Union
 from parsers.parser_utils import parse_number, parse_object_sequence_string, split_top_level
-from distributions import Normal, Uniform, Exponential
 
 
 def parse_mapping_string(s: str):
@@ -71,7 +67,7 @@ def parse_mapping_string(s: str):
     return result
 
 
-def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
+def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
     """
     Parse one prior assignment line, e.g.
       "x=0"
@@ -107,32 +103,21 @@ def parse_prior_line(line: str) -> Tuple[Tuple[str, ...], Union[Normal, Uniform,
 
     if dist_name:
         rhs = rhs.replace(dist_name, "", 1)
-
         if not (rhs.startswith("(") and rhs.endswith(")")):
             raise ValueError(f"Expected '{dist_name}(...)'.")
         args_str = rhs[1:-1]
-
-        if dist_name == "Normal":
-            args = parse_object_sequence_string(args_str)
-            dist_obj = Normal(*args)
-
-        elif dist_name == "Uniform":
-            args = parse_object_sequence_string(args_str, {0: "fraction", 1: "fraction"})
-            dist_obj = Uniform(*args)
-
-        elif dist_name == "Exponential":
-            args = parse_object_sequence_string(args_str)
-            dist_obj = Exponential(*args)
+        args = parse_object_sequence_string(args_str)
+        dist_obj = (dist_name, args)
 
     else:
         if '{' in rhs:
-            dist_obj = parse_mapping_string(rhs)
-
-            if not dist_obj:
+            mapping = parse_mapping_string(rhs)
+            if not mapping:
                 raise ValueError("Discrete distribution mapping must not be empty.")
-            
+            dist_obj = ('dist', mapping)
+        
         else:
-            dist_obj = parse_number(rhs)
+            dist_obj = ('num', parse_number(rhs))
 
     return vars_tuple, dist_obj
 
