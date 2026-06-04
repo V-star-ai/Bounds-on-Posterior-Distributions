@@ -1,11 +1,10 @@
 import re
-from typing import Tuple
 from probably.pgcl.ast import Program
 from parsers.prior_parser import parse_prior
 from parsers.program_parser import parse_program
 
 
-def split_program(src_str: str) -> Tuple[str, str]:
+def split_program(src_str: str) -> tuple[str, str]:
     """
     Split a DSL source into (prior, program).
 
@@ -24,7 +23,7 @@ def split_program(src_str: str) -> Tuple[str, str]:
     return prior_str, program_str
 
 
-def parse_src(src_str: str) -> Tuple[dict, Program, dict]:
+def parse_src(src_str: str) -> tuple[dict, Program, dict]:
     """
     Parse a full DSL source into (prior_dict, pgcl_program, distribution_map, conted_vars), where 
     prior_dict maps tuples of variable names to their initial priors, pgcl_program is the parsed pGCL AST.
