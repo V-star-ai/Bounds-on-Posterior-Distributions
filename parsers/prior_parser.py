@@ -71,10 +71,10 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform,
     """
     Parse one prior assignment line, e.g.
       "x=0"
-      "x=Normal(0,1)"
-      "x=Uniform(0,1)"
-      "x=Exponential(1)"
-      "x={0:0.2,1:0.5,3:0.3}"
+      "x~Normal(0,1)"
+      "x~Uniform(0,1)"
+      "x~Exponential(1)"
+      "x~{0:0.2,1:0.5,3:0.3}"
 
     Returns: (vars_tuple, dist_instance)
     """
@@ -83,8 +83,8 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform,
     if not line:
         return tuple(), None
 
-    # split into LHS and RHS around '='
-    lhs, rhs = line.split("=", 1)
+    # split into LHS and RHS around '=' or '~'
+    lhs, rhs = re.split(r"[=~]", line)
     if not lhs:
         raise ValueError("Missing variable(s) on the left-hand side.")
 
@@ -114,10 +114,10 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform,
             mapping = parse_mapping_string(rhs)
             if not mapping:
                 raise ValueError("Discrete distribution mapping must not be empty.")
-            dist_obj = ('dist', mapping)
+            dist_obj = ('Dict', mapping)
         
         else:
-            dist_obj = ('num', parse_number(rhs))
+            dist_obj = ('Num', parse_number(rhs))
 
     return vars_tuple, dist_obj
 
