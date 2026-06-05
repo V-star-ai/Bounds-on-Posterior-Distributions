@@ -214,6 +214,36 @@ def test_parse_mapping_uses_exact_discrete_support():
     assert np.allclose(dist.P, [1.0])
     assert dist.discrete_mask == [True]
 
+
+def test_add_uniform_continuous_upper_bound():
+    base = EED(
+        [[Fraction(0), Fraction(2)]],
+        np.array([0.0, 0.5, 0.0], dtype=float),
+        [0.0],
+        [0.0],
+        [False],
+    )
+
+    out = base.add_uniform(axis=0, lb=Fraction(0), ub=Fraction(1))
+
+    assert out.S[0].tolist() == [Fraction(0), Fraction(1), Fraction(2), Fraction(3)]
+    assert np.allclose(out.P, [0.0, 0.5, 0.5, 0.5, 0.0])
+
+
+def test_add_uniform_degenerate_scales_shift():
+    base = EED(
+        [[Fraction(0), Fraction(2)]],
+        np.array([0.0, 1.0, 0.0], dtype=float),
+        [0.0],
+        [0.0],
+        [False],
+    )
+
+    out = base.add_uniform(axis=0, lb=Fraction(1), ub=Fraction(1), distribution_value=0.25)
+
+    assert out.S[0].tolist() == [Fraction(1), Fraction(3)]
+    assert np.allclose(out.P, [0.0, 0.25, 0.0])
+
 if __name__ == "__main__":
     test_restrict_interval_discrete()
     test_init_shape_and_discrete_validation()

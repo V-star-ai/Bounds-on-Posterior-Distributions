@@ -54,6 +54,10 @@ def _is_plain_scalar(x: Any) -> bool:
     return isinstance(x, (int, float, complex, Fraction, np.number))
 
 
+def _is_nonnegative_numeric(x: Any) -> bool:
+    return _is_plain_scalar(x) and x >= 0
+
+
 class EED:
     """
     EED(S, P, alpha, beta, discrete_dims)
@@ -651,6 +655,256 @@ class EED:
             raise ValueError("Continuous tail with decay rate 1 has infinite mass")
         return coeff * approximate_step / (1 - rate ** approximate_step)
 
+    def _tail_segment_mass(
+        self,
+        coeff: Any,
+        rate: Any,
+        dist_lo: Any,
+        dist_hi: Any,
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> Any:
+        if dist_hi <= dist_lo:
+            return 0
+        if approximate_step is None:
+            if _is_plain_scalar(rate):
+                if rate == 0:
+                    return 0
+                if rate == 1:
+                    raise ValueError("Continuous tail with decay rate 1 has infinite mass")
+                rate_for_ln = float(rate)
+            else:
+                if ln is None:
+                    raise ValueError("Exact continuous tail mass with symbolic rate requires ln")
+                rate_for_ln = rate
+
+            ln_fn = ln if ln is not None else math.log
+            log_rate = ln_fn(rate_for_ln)
+            lo_factor = _pow_array(rate, [dist_lo])[0]
+            hi_factor = _pow_array(rate, [dist_hi])[0]
+            return coeff * (lo_factor - hi_factor) / (0 - log_rate)
+
+        if approximate_step <= 0:
+            raise ValueError("approximate_step must be positive")
+        if _is_plain_scalar(rate) and rate == 1:
+            raise ValueError("Continuous tail with decay rate 1 has infinite mass")
+
+        length = dist_hi - dist_lo
+        steps = int(math.ceil(float(length / approximate_step)))
+        if steps <= 0:
+            return 0
+        start_factor = _pow_array(rate, [dist_lo])[0]
+        step_factor = _pow_array(rate, [approximate_step])[0]
+        total_factor = _pow_array(step_factor, [steps])[0]
+        return coeff * approximate_step * start_factor * (1 - total_factor) / (1 - step_factor)
+
+    def _continuous_axis_interval_mass(
+        self,
+        axis: int,
+        fixed_index: Sequence[Any],
+        lo: Any,
+        hi: Any,
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> Any:
+        if hi <= lo:
+            return 0
+        if self.discrete_mask[axis]:
+            raise ValueError("Interval mass is only defined for continuous axes")
+
+        idx = list(fixed_index)
+        si = self.S[axis]
+        s0 = si[0]
+        sl = si[-1]
+        total = 0
+
+        left_hi = min(hi, s0)
+        if lo < left_hi:
+            idx[axis] = 0
+            total = total + self._tail_segment_mass(
+                self.P[tuple(idx)],
+                self.alpha[axis],
+                s0 - left_hi,
+                s0 - lo,
+                approximate_step,
+                ln,
+            )
+
+        for block_idx in range(1, len(si)):
+            cell_lo = si[block_idx - 1]
+            cell_hi = si[block_idx]
+            seg_lo = max(lo, cell_lo)
+            seg_hi = min(hi, cell_hi)
+            if seg_lo < seg_hi:
+                idx[axis] = block_idx
+                total = total + self.P[tuple(idx)] * (seg_hi - seg_lo)
+
+        right_lo = max(lo, sl)
+        if right_lo < hi:
+            idx[axis] = len(si)
+            total = total + self._tail_segment_mass(
+                self.P[tuple(idx)],
+                self.beta[axis],
+                right_lo - sl,
+                hi - sl,
+                approximate_step,
+                ln,
+            )
+
+        return total
+
+    def _density_region_term(
+        self,
+        axis: int,
+        fixed_index: Sequence[Any],
+        shift: Any,
+        probe_x: Any,
+        ln_fn,
+    ):
+        idx = list(fixed_index)
+        si = self.S[axis]
+        s0 = si[0]
+        sl = si[-1]
+        y = probe_x - shift
+
+        if y < s0:
+            idx[axis] = 0
+            coeff = self.P[tuple(idx)]
+            rate = self.alpha[axis]
+            if not (_is_nonnegative_numeric(coeff) and _is_plain_scalar(rate) and 0 < rate < 1):
+                return None
+            lam = -ln_fn(float(rate))
+            const = float(coeff) * (float(rate) ** float(s0 + shift))
+            return const, lam
+
+        if y >= sl:
+            idx[axis] = len(si)
+            coeff = self.P[tuple(idx)]
+            rate = self.beta[axis]
+            if not (_is_nonnegative_numeric(coeff) and _is_plain_scalar(rate) and 0 < rate < 1):
+                return None
+            lam = ln_fn(float(rate))
+            const = float(coeff) * (float(rate) ** float(-(shift + sl)))
+            return const, lam
+
+        block_idx = int(np.searchsorted(si, y, side="right") - 1)
+        idx[axis] = 1 + block_idx
+        coeff = self.P[tuple(idx)]
+        if not _is_nonnegative_numeric(coeff):
+            return None
+        return float(coeff), 0.0
+
+    def _axis_uniform_cell_upper(
+        self,
+        axis: int,
+        fixed_index: Sequence[Any],
+        a: Any,
+        b: Any,
+        lb: Any,
+        ub: Any,
+        distribution_value: Any,
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> Any:
+        width = ub - lb
+        si = self.S[axis]
+        total = 0
+        idx = list(fixed_index)
+
+        def overlap_len(x, lo, hi):
+            return max(0, min(hi, x - lb) - max(lo, x - ub))
+
+        # Constant interior blocks: exact trapezoid/triangle upper bound.
+        # Since new cell boundaries are built from S+lb and S+ub, each block
+        # contribution is linear or constant on [a,b), so endpoints suffice.
+        for block_idx in range(1, len(si)):
+            idx[axis] = block_idx
+            coeff = self.P[tuple(idx)]
+            left = si[block_idx - 1]
+            right = si[block_idx]
+            max_overlap = max(overlap_len(a, left, right), overlap_len(b, left, right))
+            total = total + coeff * distribution_value * max_overlap / width
+
+        # Left tail contribution.
+        idx[axis] = 0
+        left_coeff = self.P[tuple(idx)]
+        left_rate = self.alpha[axis]
+        left_boundary = si[0]
+        if left_coeff != 0 and left_rate != 0:
+            if _is_nonnegative_numeric(left_coeff) and _is_plain_scalar(left_rate) and 0 < left_rate < 1 and approximate_step is None:
+                peak = left_boundary + lb
+                candidates = [a, b]
+                if a <= peak <= b:
+                    candidates.append(peak)
+                best = 0
+                for x in candidates:
+                    seg_lo = x - ub
+                    seg_hi = min(x - lb, left_boundary)
+                    val = distribution_value * self._tail_segment_mass(
+                        left_coeff,
+                        left_rate,
+                        left_boundary - seg_hi,
+                        left_boundary - seg_lo,
+                        approximate_step,
+                        ln,
+                    ) / width
+                    if val > best:
+                        best = val
+                total = total + best
+            else:
+                union_lo = a - ub
+                union_hi = min(b - lb, left_boundary)
+                if union_lo < union_hi:
+                    total = total + distribution_value * self._tail_segment_mass(
+                        left_coeff,
+                        left_rate,
+                        left_boundary - union_hi,
+                        left_boundary - union_lo,
+                        approximate_step,
+                        ln,
+                    ) / width
+
+        # Right tail contribution.
+        idx[axis] = len(si)
+        right_coeff = self.P[tuple(idx)]
+        right_rate = self.beta[axis]
+        right_boundary = si[-1]
+        if right_coeff != 0 and right_rate != 0:
+            if _is_nonnegative_numeric(right_coeff) and _is_plain_scalar(right_rate) and 0 < right_rate < 1 and approximate_step is None:
+                peak = right_boundary + ub
+                candidates = [a, b]
+                if a <= peak <= b:
+                    candidates.append(peak)
+                best = 0
+                for x in candidates:
+                    seg_lo = max(x - ub, right_boundary)
+                    seg_hi = x - lb
+                    val = distribution_value * self._tail_segment_mass(
+                        right_coeff,
+                        right_rate,
+                        seg_lo - right_boundary,
+                        seg_hi - right_boundary,
+                        approximate_step,
+                        ln,
+                    ) / width
+                    if val > best:
+                        best = val
+                total = total + best
+            else:
+                union_lo = max(a - ub, right_boundary)
+                union_hi = b - lb
+                if union_lo < union_hi:
+                    total = total + distribution_value * self._tail_segment_mass(
+                        right_coeff,
+                        right_rate,
+                        union_lo - right_boundary,
+                        union_hi - right_boundary,
+                        approximate_step,
+                        ln,
+                    ) / width
+
+        return total
+
     def _axis_slice_mass(
         self,
         axis: int,
@@ -755,6 +1009,98 @@ class EED:
             c = int(c)
         S_new[axis] = [x + c for x in si]
         return EED(S_new, self.P, self.alpha, self.beta, self.discrete_mask)
+
+    def add_uniform(
+        self,
+        axis: int,
+        lb,
+        ub,
+        distribution_value: Any = 1,
+        approximate_step: Fraction = None,
+        ln=None,
+    ) -> "EED":
+        axis = int(axis)
+        if not (0 <= axis < self.n):
+            raise IndexError(f"axis 越界：{axis}")
+        if self.discrete_mask[axis]:
+            raise ValueError("add_uniform currently only supports continuous axes")
+
+        lb = Fraction(lb)
+        ub = Fraction(ub)
+        if lb > ub:
+            raise ValueError("add_uniform requires lb <= ub")
+        if _is_plain_scalar(distribution_value) and distribution_value < 0:
+            raise ValueError("distribution_value must be nonnegative")
+        if lb == ub:
+            return self.add_constant(axis, lb).times_constant(distribution_value)
+
+        width = ub - lb
+        old_axis = self.S[axis]
+        new_axis = np.asarray(_sorted_unique(list(old_axis + lb) + list(old_axis + ub)), dtype=object)
+
+        spatial_shape_old = list(self.P.shape[: self.n])
+        spatial_shape_new = list(spatial_shape_old)
+        spatial_shape_new[axis] = len(new_axis) + 1
+        extra_shape = self.P.shape[self.n :]
+
+        P_new = np.empty(tuple(spatial_shape_new) + extra_shape, dtype=object)
+        other_axes = [i for i in range(self.n) if i != axis]
+        iter_shape = tuple(spatial_shape_old[i] for i in other_axes) + extra_shape
+        iter_indices = np.ndindex(iter_shape) if iter_shape else [()]
+
+        left_boundary = new_axis[0]
+        right_boundary = new_axis[-1]
+
+        for combined_idx in iter_indices:
+            split = len(other_axes)
+            other_idx = combined_idx[:split]
+            extra_idx = combined_idx[split:]
+
+            dst_index = [slice(None)] * self.n + list(extra_idx)
+            fixed_index = [slice(None)] * self.n + list(extra_idx)
+            for other_axis, value in zip(other_axes, other_idx):
+                dst_index[other_axis] = value
+                fixed_index[other_axis] = value
+
+            line = np.empty(len(new_axis) + 1, dtype=object)
+            line[0] = distribution_value * self._continuous_axis_interval_mass(
+                axis,
+                fixed_index,
+                left_boundary - ub,
+                left_boundary - lb,
+                approximate_step,
+                ln,
+            ) / width
+
+            for i in range(1, len(new_axis)):
+                line[i] = self._axis_uniform_cell_upper(
+                    axis,
+                    fixed_index,
+                    new_axis[i - 1],
+                    new_axis[i],
+                    lb,
+                    ub,
+                    distribution_value,
+                    approximate_step,
+                    ln,
+                )
+
+            line[-1] = distribution_value * self._continuous_axis_interval_mass(
+                axis,
+                fixed_index,
+                right_boundary - ub,
+                right_boundary - lb,
+                approximate_step,
+                ln,
+            ) / width
+
+            P_new[tuple(dst_index)] = line
+
+        S_new = [arr.copy() for arr in self.S]
+        S_new[axis] = new_axis
+        alpha_new = list(self.alpha)
+        beta_new = list(self.beta)
+        return EED(S_new, P_new, alpha_new, beta_new, self.discrete_mask)
 
 if __name__ == '__main__':
 
