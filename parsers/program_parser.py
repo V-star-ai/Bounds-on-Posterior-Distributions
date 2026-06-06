@@ -1,5 +1,5 @@
 import re
-from parsers.parser_utils import parse_object_sequence_string
+from parsers.parser_utils import parse_number
 from probably.pgcl import parse_pgcl
 from probably.pgcl.ast import Program
 
