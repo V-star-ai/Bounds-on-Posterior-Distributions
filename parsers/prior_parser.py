@@ -22,7 +22,7 @@ def parse_mapping_string(s: str):
         return {}
 
     result = {}
-    for item in split_top_level(inner):
+    for item in inner.split(","):
         parts = item.split(":")
         if len(parts) != 2:
             raise ValueError(f"Invalid mapping format: {s}")
