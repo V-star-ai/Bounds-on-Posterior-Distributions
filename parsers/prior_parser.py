@@ -8,8 +8,6 @@ def parse_mapping_string(s: str):
     """
     Parse a mapping string into a Python dict.
     Keys may be numbers or tuples of numbers. Values must be numbers.
-
-    Example: {1:2,0:1,(1,2):3/4}' -> {1: 2, 0: 1, (1, 2): Fraction(3, 4)}
     """
 
     s = "".join(s.split())
@@ -23,38 +21,14 @@ def parse_mapping_string(s: str):
     if inner == "":
         return {}
 
-    def parse_key(x: str) -> tuple[int, ...]:
-        if not x:
-            raise ValueError("Empty key encountered")
-
-        if x[0] == "(" and x[-1] == ")":
-            body = x[1:-1]
-            raw = tuple(parse_object_sequence_string(body))
-            if not raw:
-                raise ValueError("Empty key encountered")
-        else:
-            raw = (parse_number(x),)
-
-        if not all(
-            isinstance(v, int)
-            or (isinstance(v, float) and v.is_integer())
-            or (isinstance(v, Fraction) and v.denominator == 1)
-            for v in raw
-        ):
-            raise ValueError("The support of a discrete distribution must consist of integers.")
-
-        return tuple(int(v) for v in raw)
-
     result = {}
     for item in split_top_level(inner):
-        parts = split_top_level(item, sep=":")
+        parts = item.split(":")
         if len(parts) != 2:
-            raise ValueError(f"Each mapping item must contain exactly one top-level ':', got {item}")
+            raise ValueError(f"Invalid mapping format: {s}")
 
-        k_str, v_str = parts
-        k = parse_key(k_str)
-        v = parse_number(v_str)
-
+        k = parse_number(parts[0])
+        v = parse_number(parts[1])
         if v < 0:
             raise ValueError("Probability values must be nonnegative.")
         elif v > 0:
@@ -62,12 +36,12 @@ def parse_mapping_string(s: str):
             result[k] = v
 
     if not result:
-        raise ValueError("An empty mapping cannot represent a distribution.")
+        result = {0: 0}
 
     return result
 
 
-def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform, Exponential, EED]]:
+def parse_prior_line(line: str) -> tuple[tuple[str, ...], tuple]:
     """
     Parse one prior assignment line, e.g.
       "x=0"
@@ -76,7 +50,7 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform,
       "x~Exponential(1)"
       "x~{0:0.2,1:0.5,3:0.3}"
 
-    Returns: (vars_tuple, dist_instance)
+    Returns: (vars_tuple, dist_obj)
     """
 
     line = "".join(line.split())
@@ -125,7 +99,7 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], Union[Normal, Uniform,
 def parse_prior(prior: str):
     """Parse the prior section into a dict mapping vars_tuple to a distribution instance."""
 
-    prior_items = re.split(r"[\n;]+", prior)
+    prior_items = [x for x in re.split(r"[\n;]+", prior) if x.strip()]
     prior_dict = {}
 
     for item in prior_items:
