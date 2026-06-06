@@ -26,7 +26,7 @@ def replace_distributions(code: str) -> tuple[str, dict[str, tuple]]:
         args_str = match.group(2)
         
         args_str = "".join(args_str.split())
-        args = parse_object_sequence_string(args_str)
+        args = tuple(parse_number(x) for x in s.split(","))
         dist_obj = (dist_name, args)
 
         placeholder = f"distribution_{counter}"
