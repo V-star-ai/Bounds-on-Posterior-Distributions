@@ -6,6 +6,14 @@ from numbers import Real
 import math
 
 
+def _as_fraction(value) -> Fraction:
+    if isinstance(value, Fraction):
+        return value
+    if isinstance(value, float):
+        return Fraction(str(value))
+    return Fraction(value)
+
+
 def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=None) -> BGD:
     """Convert Normal(mean, var) to a one-dimensional BGD upper approximation.
 
@@ -55,7 +63,7 @@ def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=No
             if len(center_subdivision) < 2:
                 raise ValueError("center_subdivision must contain at least two points")
 
-            center_points = tuple(Fraction(x) for x in center_subdivision)
+            center_points = tuple(_as_fraction(x) for x in center_subdivision)
 
             for left, right in zip(center_points, center_points[1:]):
                 if not left < right:
@@ -103,7 +111,7 @@ def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=No
             if len(block_subdivision) < 2:
                 raise ValueError("block_subdivision must contain at least two points")
 
-            block_points = tuple(Fraction(x) for x in block_subdivision)
+            block_points = tuple(_as_fraction(x) for x in block_subdivision)
 
             if block_points[0] != 0:
                 raise ValueError("block_subdivision must start at 0")
@@ -237,7 +245,7 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
             if len(center_subdivision) < 2:
                 raise ValueError("center_subdivision must contain at least two points")
     
-            center_points = tuple(Fraction(x) for x in center_subdivision)
+            center_points = tuple(_as_fraction(x) for x in center_subdivision)
     
             for left, right in zip(center_points, center_points[1:]):
                 if not left < right:
@@ -272,7 +280,7 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
             if len(block_subdivision) < 2:
                 raise ValueError("block_subdivision must contain at least two points")
     
-            block_points = tuple(Fraction(x) for x in block_subdivision)
+            block_points = tuple(_as_fraction(x) for x in block_subdivision)
             if block_points[0] != 0:
                 raise ValueError("block_subdivision must start at 0")
             if not block_points[-1] > 0:
@@ -314,20 +322,20 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
 def mapping_to_bgd(mapping, mode) -> BGD:
     """Convert a finite discrete distribution mapping to a one-dimensional BGD."""
         
-    items = sorted(mapping.items(), key=lambda item: Fraction(item[0]))
+    items = sorted(mapping.items(), key=lambda item: _as_fraction(item[0]))
 
     breakpoints = []
     masses = []
 
     first_point, first_mass = items[0]
-    first_point = Fraction(first_point)
+    first_point = _as_fraction(first_point)
 
     # First Dirac interval [x0, x0].
     breakpoints.extend([first_point, first_point])
     masses.append(first_mass)
 
     for point, mass in items[1:]:
-        point = Fraction(point)
+        point = _as_fraction(point)
 
         # Zero-mass gap from previous point to current point.
         breakpoints.append(point)
@@ -352,8 +360,8 @@ def mapping_to_bgd(mapping, mode) -> BGD:
 
 def uniform_to_bgd(a, b, mode) -> BGD:
     """Convert ('Uniform', (a, b)) to a one-dimensional BGD."""
-    a = Fraction(a)
-    b = Fraction(b)
+    a = _as_fraction(a)
+    b = _as_fraction(b)
 
     if not a < b:
         raise ValueError("Uniform requires a < b")
@@ -375,7 +383,7 @@ def uniform_to_bgd(a, b, mode) -> BGD:
 
 def num_to_bgd(num, mode) -> BGD:
     """Convert x = num to a one-dimensional BGD Dirac distribution."""
-    point = Fraction(num)
+    point = _as_fraction(num)
 
     if mode == 'MUD':
         center = MUD([(point, point)], np.array([1], dtype=object))
