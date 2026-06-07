@@ -33,9 +33,6 @@ def parse_mapping_string(s: str):
             # Drop entries with zero probability.
             result[k] = v
 
-    if not result:
-        result = {0: 0}
-
     return result
 
 
