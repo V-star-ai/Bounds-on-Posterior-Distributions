@@ -1,8 +1,8 @@
 from fractions import Fraction
-from typing import Union
+from typing import Union, Optional
 
 
-def parse_number(s: str, forced_type = None) -> Union[int, float, Fraction]:
+def parse_number(s: str, forced_type: Optional[str] = None) -> Union[int, float, Fraction]:
     """Parse a numeric string into int / float / Fraction, optionally forced."""
     
     if forced_type is not None:
@@ -75,7 +75,7 @@ def split_top_level(s: str, sep: str = ",") -> list[str]:
     return parts
 
 
-def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None):
+def parse_object_sequence_string(s: str, type_map: Optional[dict[int, str]] = None):
     """
     Parse a top-level comma-separated string into Python objects.
 
