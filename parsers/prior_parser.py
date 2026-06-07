@@ -88,7 +88,7 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], tuple]:
             mapping = parse_mapping_string(rhs)
             if not mapping:
                 raise ValueError("Discrete distribution mapping must not be empty.")
-            dist_obj = ('Dict', mapping)
+            dist_obj = ('Mapping', mapping)
         
         else:
             dist_obj = ('Num', parse_number(rhs))
