@@ -1,7 +1,8 @@
 from fractions import Fraction
+from typing import Union
 
 
-def parse_number(s: str, forced_type: str | None = None) -> int | float | Fraction:
+def parse_number(s: str, forced_type = None) -> Union[int, float, Fraction]:
     """Parse a numeric string into int / float / Fraction, optionally forced."""
     
     if forced_type is not None:
@@ -98,7 +99,7 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
     s = "".join(s.split())
 
     if s == "":
-        return []
+        return tuple()
 
     parts = split_top_level(s)
     n = len(parts)
@@ -111,7 +112,7 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
             raise IndexError(f"type_map index {k} out of range for {n} top-level item(s)")
         norm_type_map[k] = v
 
-    def parse_obj(x: str, forced_type: str | None) -> list:
+    def parse_obj(x: str, forced_type = None):
         if not x:
             raise ValueError("Empty item encountered")
 
