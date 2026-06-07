@@ -373,16 +373,19 @@ def uniform_to_bgd(a, b, mode) -> BGD:
     return BGD(E, alpha=[0], beta=[0])
 
 
-def num_to_bgd(num) -> BGD:
+def num_to_bgd(num, mode) -> BGD:
     """Convert x = num to a one-dimensional BGD Dirac distribution."""
     point = Fraction(num)
 
-    center = MUD([(point, point)], np.array([1], dtype=object))
-
-    left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
-    right = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
-
-    E = np.array([left, center, right], dtype=object)
+    if mode == 'MUD':
+        center = MUD([(point, point)], np.array([1], dtype=object))
+    
+        left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        right = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+    
+        E = np.array([left, center, right], dtype=object)
+    else:
+        pass
 
     return BGD(E, alpha=[0], beta=[0])
 
@@ -407,21 +410,28 @@ def merge_bgds(bgds: Sequence[BGD]) -> BGD:
     return result
 
 
-def prior_to_bgd(prior: dict,mode, center_subdivision=None, block_subdivision=None) -> tuple[BGD, tuple]:
+def prior_to_bgd(prior: dict, mode, center_subdivision=None, block_subdivision=None) -> tuple[BGD, tuple]:
     """Convert a prior dict to a multi-dimensional BGD.
 
     prior format example:
         {
             ('x',): ('Normal', (0, 1)),
             ('y',): ('Uniform', (0, 1)),
-            ('z',): ('Num', 0),
+            ('t',): ('Exponential', (1,)),
             ('w',): ('Mapping', {0: 1/2, 1: 1/2}),
-            ('t',): ('Exponential', (1,))
+            ('z',): ('Num', 0)
         }
 
     Return:
         (joint_bgd, variable_order)
     """
+    if not prior:
+        left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        center = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        right = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        E = np.array([left, center, right], dtype=object)
+        return BGD(E, alpha=[0], beta=[0]), ('x',)
+        
     bgds = []
     variable_order = []
 
@@ -456,10 +466,10 @@ def prior_to_bgd(prior: dict,mode, center_subdivision=None, block_subdivision=No
             bgd = uniform_to_bgd(a, b, mode)
 
         elif dist_name == 'Mapping':
-            bgd = mapping_to_bgd(params)
+            bgd = mapping_to_bgd(params, mode)
 
         elif dist_name == 'Num':
-            bgd = num_to_bgd(params)
+            bgd = num_to_bgd(params, mode)
 
         else:
             raise ValueError(f"unsupported prior distribution: {dist_name!r}")
