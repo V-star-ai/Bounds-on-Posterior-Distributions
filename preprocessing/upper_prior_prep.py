@@ -14,6 +14,20 @@ def _as_fraction(value) -> Fraction:
     return Fraction(value)
 
 
+def empty_1d_bgd(mode) -> BGD:
+    """Create a one-dimensional empty BGD."""
+
+    if mode == 'MUD':
+        left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        center = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        right = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
+        E = np.array([left, center, right], dtype=object)
+    else:
+        pass
+
+    return BGD(E, alpha=[0], beta=[0])
+
+
 def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=None) -> BGD:
     """Convert Normal(mean, var) to a one-dimensional BGD upper approximation.
 
@@ -321,26 +335,29 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
 
 def mapping_to_bgd(mapping, mode) -> BGD:
     """Convert a finite discrete distribution mapping to a one-dimensional BGD."""
+
+    if not mapping:
+            return empty_1d_bgd(mode)
         
     items = sorted(mapping.items(), key=lambda item: _as_fraction(item[0]))
-
+    
     breakpoints = []
     masses = []
-
+    
     first_point, first_mass = items[0]
     first_point = _as_fraction(first_point)
-
+    
     # First Dirac interval [x0, x0].
     breakpoints.extend([first_point, first_point])
     masses.append(first_mass)
-
+    
     for point, mass in items[1:]:
         point = _as_fraction(point)
-
+    
         # Zero-mass gap from previous point to current point.
         breakpoints.append(point)
         masses.append(0)
-
+    
         # Dirac interval [point, point].
         breakpoints.append(point)
         masses.append(mass)
@@ -434,11 +451,7 @@ def prior_to_bgd(prior: dict, mode, center_subdivision=None, block_subdivision=N
         (joint_bgd, variable_order)
     """
     if not prior:
-        left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
-        center = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
-        right = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
-        E = np.array([left, center, right], dtype=object)
-        return BGD(E, alpha=[0], beta=[0]), ('x',)
+        return empty_1d_bgd(mode), ('x',)
         
     bgds = []
     variable_order = []
