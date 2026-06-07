@@ -25,7 +25,7 @@ def split_program(src_str: str) -> tuple[str, str]:
 
 def parse_src(src_str: str) -> tuple[dict, Program, dict]:
     """
-    Parse a full DSL source into (prior_dict, pgcl_program, distribution_map, conted_vars), where 
+    Parse a full DSL source into (prior_dict, pgcl_program, distribution_map), where 
     prior_dict maps tuples of variable names to their initial priors, pgcl_program is the parsed pGCL AST.
     distribution_map maps placeholders in the program to corresponding distribution instances.
     """
