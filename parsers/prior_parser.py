@@ -1,13 +1,11 @@
 import re
-from fractions import Fraction
-from typing import Union
-from parsers.parser_utils import parse_number
+from parsers.parser_utils import parse_number, parse_object_sequence_string
 
 
 def parse_mapping_string(s: str):
     """
     Parse a mapping string into a Python dict.
-    Keys may be numbers or tuples of numbers. Values must be numbers.
+    Keys and Values must be numbers.
     """
 
     s = "".join(s.split())
@@ -104,7 +102,12 @@ def parse_prior(prior: str):
 
     for item in prior_items:
         vars_tuple, dist_obj = parse_prior_line(item)
+        
         if vars_tuple:
+            
+            if vars_tuple in prior_dict:
+                raise ValueError(f"Duplicate prior for variables {vars_tuple}.")
+                
             prior_dict[vars_tuple] = dist_obj
 
     return prior_dict
