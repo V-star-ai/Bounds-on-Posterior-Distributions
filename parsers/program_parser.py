@@ -26,7 +26,7 @@ def replace_distributions(code: str) -> tuple[str, dict[str, tuple]]:
         args_str = match.group(2)
         
         args_str = "".join(args_str.split())
-        args = tuple(parse_number(x) for x in s.split(","))
+        args = tuple(parse_number(x) for x in args_str.split(","))
         dist_obj = (dist_name, args)
 
         placeholder = f"distribution_{counter}"
@@ -38,7 +38,7 @@ def replace_distributions(code: str) -> tuple[str, dict[str, tuple]]:
     return new_code, distribution_map
 
 
-def parse_program(program_str: str) -> tuple[Program, dict]:
+def parse_program(program_str: str) -> tuple[Program, dict[str, tuple]]:
     """
     Parse a program str into a pGCL program.
     """
