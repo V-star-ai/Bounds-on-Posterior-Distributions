@@ -88,11 +88,11 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
         type_map = {0: 'fraction'}
 
         Result:
-        [
+        (
             [[Fraction(6,5), Fraction(1,1), Fraction(2,1), Fraction(3,1)],
              [Fraction(17,5), Fraction(11,2), Fraction(1,1)]],
             (1, 2)
-        ]
+        )
     """
     
     s = "".join(s.split())
@@ -129,4 +129,4 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
 
         return parse_number(x, forced_type)
 
-    return [parse_obj(part, norm_type_map.get(i)) for i, part in enumerate(parts)]
+    return tuple(parse_obj(part, norm_type_map.get(i)) for i, part in enumerate(parts))
