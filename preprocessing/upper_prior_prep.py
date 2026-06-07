@@ -250,6 +250,8 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
     if lam <= 0:
         raise ValueError("lam must be positive")
 
+    lam_f = float(lam)
+
     if mode == 'MUD':
         # ---------------- center block ----------------
         if center_subdivision is None:
@@ -278,7 +280,7 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
                     mass = 0
                 else:
                     start = max(left, Fraction(0))
-                    upper_density = lam * math.exp(-float(lam) * float(start))
+                    upper_density = lam_f * math.exp(-lam_f * float(start))
                     mass = upper_density * float(right - left)
     
                 center_masses.append(mass)
@@ -313,7 +315,7 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
             global_right = center_right + local_right
     
             start = global_left
-            upper_density = lam * math.exp(-float(lam) * float(start))
+            upper_density = lam_f * math.exp(-lam_f * float(start))
             mass = upper_density * float(global_right - global_left)
     
             right_masses.append(mass)
@@ -324,7 +326,7 @@ def exponential_to_bgd(lam, mode, center_subdivision=None, block_subdivision=Non
         left = MUD([(Fraction(0),)], np.empty((0,), dtype=object))
     
         alpha = 0
-        beta = math.exp(-float(lam) * float(block_length))
+        beta = math.exp(-lam_f * float(block_length))
     
         E = np.array([left, center, right], dtype=object)
     else:
@@ -337,7 +339,7 @@ def mapping_to_bgd(mapping, mode) -> BGD:
     """Convert a finite discrete distribution mapping to a one-dimensional BGD."""
 
     if not mapping:
-            return empty_1d_bgd(mode)
+        return empty_1d_bgd(mode)
         
     items = sorted(mapping.items(), key=lambda item: _as_fraction(item[0]))
     
