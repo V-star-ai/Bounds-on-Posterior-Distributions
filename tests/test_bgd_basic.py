@@ -232,6 +232,41 @@ class TestBGDBasic(unittest.TestCase):
 
         self.assertEqual(result.P[0, 0].expr, "(x*3)")
 
+    def test_mud_marginalize_sums_axis_and_preserves_dirac_breakpoints(self):
+        mud = MUD(
+            [[0, 1, 1], [10, 11, 12]],
+            [[2, 3], [5, 7]],
+        )
+
+        result = mud.marginalize(0)
+
+        self.assertEqual(result.S, ((Fraction(10), Fraction(11), Fraction(12)),))
+        self.assertEqual(result.P.tolist(), [Fraction(7), Fraction(10)])
+        self.assertEqual(result.mass(), mud.mass())
+
+    def test_mud_marginalize_rejects_last_dimension(self):
+        with self.assertRaisesRegex(ValueError, "only MUD dimension"):
+            MUD([[0, 1]], [1]).marginalize(0)
+
+    def test_mud_permute_dims_reorders_breakpoints_and_tensor(self):
+        mud = MUD(
+            [[0, 1, 2], [10, 11, 11], [20, 21]],
+            np.array([[[2], [3]], [[5], [7]]], dtype=object),
+        )
+
+        result = mud.permute_dims([1, 0, 2])
+
+        self.assertEqual(
+            result.S,
+            (
+                (Fraction(10), Fraction(11), Fraction(11)),
+                (Fraction(0), Fraction(1), Fraction(2)),
+                (Fraction(20), Fraction(21)),
+            ),
+        )
+        self.assertEqual(result.shape, (2, 2, 1))
+        self.assertEqual(result.P.tolist(), [[[2], [5]], [[3], [7]]])
+
     def test_mud_allows_empty_dimension(self):
         mud = MUD([[1], [0, 2]], np.empty((0, 1), dtype=object))
 
@@ -709,6 +744,88 @@ class TestBGDBasic(unittest.TestCase):
     def test_bgd_independent_product_rejects_non_bgd(self):
         with self.assertRaisesRegex(TypeError, "other must be a BGD"):
             make_1d_bgd().independent_product(MUD([[0, 1]], [1]))
+
+    def test_bgd_scale_multiplies_all_blocks(self):
+        bgd = make_1d_bgd(left_mass=2, center_mass=3, right_mass=5)
+
+        result = bgd.scale(7)
+
+        self.assertEqual(result.E[0].P.tolist(), [Fraction(14)])
+        self.assertEqual(result.E[1].P.tolist(), [Fraction(21)])
+        self.assertEqual(result.E[2].P.tolist(), [Fraction(35)])
+        self.assertEqual(result.mass(), bgd.mass() * 7)
+
+    def test_bgd_marginalize_removes_dimension_and_preserves_mass(self):
+        E = make_e()
+        E[1, 1] = MUD([[0, 1], [10, 12]], [[3]])
+        E[0, 1] = MUD([[0, 2], [0, 2]], [[5]])
+        E[2, 1] = MUD([[0, 3], [0, 2]], [[7]])
+        bgd = BGD(E, [Fraction(1, 2), Fraction(1, 3)], [Fraction(1, 5), Fraction(1, 7)])
+
+        result = bgd.marginalize(0)
+
+        self.assertIsInstance(result, BGD)
+        self.assertEqual(result.ndim, 1)
+        self.assertEqual(result.alpha, (Fraction(1, 3),))
+        self.assertEqual(result.beta, (Fraction(1, 7),))
+        self.assertEqual(result.center_lefts, (Fraction(10),))
+        self.assertEqual(result.center_rights, (Fraction(12),))
+        self.assertEqual(result.mass(), bgd.mass())
+        self.assertEqual(result.E[1].S, ((Fraction(10), Fraction(12)),))
+
+    def test_bgd_marginalize_1d_returns_scalar_mass(self):
+        bgd = make_1d_bgd(left_mass=2, center_mass=3, right_mass=5)
+
+        self.assertEqual(bgd.marginalize(0), bgd.mass())
+
+    def test_bgd_permute_dims_reorders_frame_and_blocks(self):
+        bgd = BGD(make_e(), [Fraction(1, 2), Fraction(1, 3)], [Fraction(1, 5), Fraction(1, 7)])
+
+        result = bgd.permute_dims([1, 0])
+
+        self.assertEqual(result.alpha, (Fraction(1, 3), Fraction(1, 2)))
+        self.assertEqual(result.beta, (Fraction(1, 7), Fraction(1, 5)))
+        self.assertEqual(result.left_lengths, (Fraction(2), Fraction(2)))
+        self.assertEqual(result.right_lengths, (Fraction(3), Fraction(3)))
+        self.assertEqual(result.E[2, 0].P.tolist(), bgd.E[0, 2].P.tolist())
+
+    def test_bgd_replace_dim_replaces_with_independent_1d_bgd(self):
+        original = BGD(make_e(), [Fraction(1, 2), Fraction(1, 3)], [Fraction(1, 5), Fraction(1, 7)])
+        new_dim = make_1d_bgd(
+            left_mass=11,
+            center_mass=13,
+            right_mass=17,
+            alpha=Fraction(1, 4),
+            beta=Fraction(1, 6),
+        )
+
+        result = original.replace_dim(0, new_dim)
+
+        self.assertEqual(result.ndim, 2)
+        self.assertEqual(result.alpha, (Fraction(1, 4), Fraction(1, 3)))
+        self.assertEqual(result.beta, (Fraction(1, 6), Fraction(1, 7)))
+        self.assertEqual(result.mass(), original.mass() * new_dim.mass())
+        self.assertEqual(result.E[1, 1].S[0], new_dim.E[1].S[0])
+
+    def test_bgd_replace_dim_1d_scales_new_distribution_by_old_mass(self):
+        original = make_1d_bgd(left_mass=2, center_mass=3, right_mass=5)
+        new_dim = make_1d_bgd(left_mass=7, center_mass=11, right_mass=13)
+
+        result = original.replace_dim(0, new_dim)
+
+        self.assertEqual(result.ndim, 1)
+        self.assertEqual(result.mass(), original.mass() * new_dim.mass())
+        self.assertEqual(result.E[1].P.tolist(), [new_dim.E[1].P[0] * original.mass()])
+
+    def test_bgd_replace_dim_rejects_bad_inputs(self):
+        bgd = make_1d_bgd()
+
+        with self.assertRaisesRegex(ValueError, "dim out of range"):
+            bgd.replace_dim(1, make_1d_bgd())
+        with self.assertRaisesRegex(TypeError, "new must be a BGD"):
+            bgd.replace_dim(0, MUD([[0, 1]], [1]))
+        with self.assertRaisesRegex(ValueError, "one-dimensional"):
+            bgd.replace_dim(0, BGD(make_e(), [0, 0], [0, 0]))
 
     def test_bgd_restrict_rejects_bad_inputs(self):
         bgd = make_1d_bgd()

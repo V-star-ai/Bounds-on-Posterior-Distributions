@@ -499,6 +499,29 @@ class MUD:
         result_P = self.P.reshape(left_shape) * other.P.reshape(right_shape)
         return MUD(self.S + other.S, result_P)
 
+    def marginalize(self, dim: int) -> MUD:
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+        if self.ndim == 1:
+            raise ValueError("cannot marginalize the only MUD dimension")
+
+        result_S = self.S[:dim] + self.S[dim + 1 :]
+        result_shape = self.shape[:dim] + self.shape[dim + 1 :]
+        result_P = np.empty(result_shape, dtype=object)
+        result_P.fill(0)
+
+        for index in iter_indices(self.shape):
+            result_index = index[:dim] + index[dim + 1 :]
+            result_P[result_index] = result_P[result_index] + self.P[index]
+
+        return MUD(result_S, result_P)
+
+    def permute_dims(self, order: Sequence[int]) -> MUD:
+        order = self._validate_permutation(order, self.ndim)
+        result_S = tuple(self.S[dim] for dim in order)
+        result_P = np.transpose(self.P, axes=order).copy()
+        return MUD(result_S, result_P)
+
     def restrict(self, dim: int, op: str, c) -> MUD:
         if dim < 0 or dim >= self.ndim:
             raise ValueError("dim out of range")
@@ -569,6 +592,15 @@ class MUD:
                 target_P[target_index] = target_P[target_index] + source_mass * ratio
 
         return MUD(target, target_P)
+
+    @staticmethod
+    def _validate_permutation(order: Sequence[int], ndim: int) -> tuple[int, ...]:
+        order_tuple = tuple(order)
+        if len(order_tuple) != ndim:
+            raise ValueError(f"order must contain {ndim} dimensions")
+        if set(order_tuple) != set(range(ndim)):
+            raise ValueError("order must be a permutation of dimensions")
+        return order_tuple
 
 
 @dataclass(frozen=True)
@@ -698,6 +730,12 @@ class BGD:
                 continue
             total = total + block_mass * self._tail_factor(direction)
         return total
+
+    def scale(self, factor) -> BGD:
+        result_E = np.empty(self.E.shape, dtype=object)
+        for index in iter_indices(self.E.shape):
+            result_E[index] = self.E[index].scale(factor)
+        return BGD(result_E, self.alpha, self.beta)
 
     def standardize(self) -> BGD:
         standardized = np.empty(self.E.shape, dtype=object)
@@ -946,6 +984,67 @@ class BGD:
 
         return BGD(result_E, self.alpha + other.alpha, self.beta + other.beta).standardize()
 
+    def marginalize(self, dim: int):
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+        if self.ndim == 1:
+            return self.mass()
+
+        result_shape = (3,) * (self.ndim - 1)
+        result_E = np.empty(result_shape, dtype=object)
+        result_center = (1,) * (self.ndim - 1)
+        old_center = (1,) * self.ndim
+        remaining_dims = tuple(axis for axis in range(self.ndim) if axis != dim)
+
+        for result_index in iter_indices(result_shape):
+            pieces = []
+            for removed_index in range(3):
+                old_index = result_index[:dim] + (removed_index,) + result_index[dim:]
+                piece = self.E[old_index].marginalize(dim)
+                if result_index == result_center and old_index != old_center:
+                    for new_axis, old_axis in enumerate(remaining_dims):
+                        piece = _shift_mud_dim(
+                            piece, new_axis, self.center_lefts[old_axis]
+                        )
+                piece = piece.scale(self._marginalize_removed_axis_factor(dim, removed_index))
+                pieces.append(piece)
+
+            result = pieces[0]
+            for piece in pieces[1:]:
+                result = result + piece
+            result_E[result_index] = result
+
+        alpha = self.alpha[:dim] + self.alpha[dim + 1 :]
+        beta = self.beta[:dim] + self.beta[dim + 1 :]
+        return BGD(result_E, alpha, beta).standardize()
+
+    def permute_dims(self, order: Sequence[int]) -> BGD:
+        order = MUD._validate_permutation(order, self.ndim)
+        transposed_E = np.transpose(self.E, axes=order)
+        result_E = np.empty(transposed_E.shape, dtype=object)
+        for index in iter_indices(result_E.shape):
+            result_E[index] = transposed_E[index].permute_dims(order)
+
+        alpha = tuple(self.alpha[dim] for dim in order)
+        beta = tuple(self.beta[dim] for dim in order)
+        return BGD(result_E, alpha, beta)
+
+    def replace_dim(self, dim: int, new: BGD) -> BGD:
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+        if not isinstance(new, BGD):
+            raise TypeError("new must be a BGD")
+        if new.ndim != 1:
+            raise ValueError("new must be a one-dimensional BGD")
+
+        if self.ndim == 1:
+            return new.scale(self.mass()).standardize()
+
+        rest = self.marginalize(dim)
+        joint = rest.independent_product(new)
+        order = tuple(range(dim)) + (self.ndim - 1,) + tuple(range(dim, self.ndim - 1))
+        return joint.permute_dims(order).standardize()
+
     def _tail_factor(self, direction: Direction):
         self._validate_direction(direction)
         factors = []
@@ -1038,6 +1137,15 @@ class BGD:
         for index in iter_indices(self.E.shape):
             result[index] = self.E[index].copy()
         return result
+
+    def _marginalize_removed_axis_factor(self, dim: int, removed_index: int):
+        if removed_index == 0:
+            return 1 / (1 - self.alpha[dim])
+        if removed_index == 1:
+            return Fraction(1)
+        if removed_index == 2:
+            return 1 / (1 - self.beta[dim])
+        raise ValueError("removed_index must be 0, 1, or 2")
 
     def _product_component_mud(
         self, index: Index, *, use_global_center: bool
