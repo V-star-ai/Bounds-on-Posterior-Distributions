@@ -3,68 +3,50 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
-from math import gcd
-from numbers import Real
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
-
-Breakpoints = tuple[tuple[Fraction, ...], ...]
-Direction = tuple[int, ...]
-Index = tuple[int, ...]
-Interval = tuple[Fraction, Fraction]
-
-
-def _as_fraction(value) -> Fraction:
-    if isinstance(value, Fraction):
-        return value
-    return Fraction(value)
-
-
-def _normalize_breakpoints(S: Sequence[Sequence]) -> Breakpoints:
-    if not isinstance(S, Sequence) or len(S) == 0:
-        raise ValueError("S must be a non-empty sequence of breakpoint sequences")
-
-    normalized = []
-    for dim, breakpoints in enumerate(S):
-        if not isinstance(breakpoints, Sequence) or len(breakpoints) < 1:
-            raise ValueError(f"S[{dim}] must contain at least one breakpoint")
-
-        seq = tuple(_as_fraction(x) for x in breakpoints)
-        for left, right in zip(seq, seq[1:]):
-            if left > right:
-                raise ValueError(f"S[{dim}] must be non-decreasing")
-        normalized.append(seq)
-
-    return tuple(normalized)
-
-
-def _shape_from_breakpoints(S: Breakpoints) -> tuple[int, ...]:
-    return tuple(len(s) - 1 for s in S)
-
-
-def _object_array(values, shape: tuple[int, ...], name: str) -> np.ndarray:
-    array = np.asarray(values, dtype=object)
-    if array.shape != shape:
-        raise ValueError(f"{name} shape must be {shape}, got {array.shape}")
-    return array.copy()
-
-
-def _direction_to_index(direction: Direction) -> Index:
-    return tuple(d + 1 for d in direction)
-
-
-def _index_to_direction(index: Index) -> Direction:
-    return tuple(i - 1 for i in index)
-
-
-def _is_static_real(value) -> bool:
-    return isinstance(value, Real) and not isinstance(value, bool)
-
-
-def _is_static_zero(value) -> bool:
-    return _is_static_real(value) and value == 0
+from distributions.mud import (
+    AffineCell,
+    AffineCellOps,
+    AffineMUD,
+    Breakpoints,
+    CellOps,
+    Direction,
+    GridMUD,
+    Index,
+    Interval,
+    MUD,
+    MassCellOps,
+    MassMUD,
+    _align_mud_dim_to_extent,
+    _array_is_static_zero,
+    _as_fraction,
+    _boundary_slice_mud,
+    _ceil_fraction,
+    _direction_to_index,
+    _index_to_direction,
+    _is_static_real,
+    _is_static_zero,
+    _iter_indices,
+    _move_slice_to_point,
+    _object_power,
+    _remove_boundary_slice,
+    _shift_grid_dim,
+    _shift_mud_dim,
+    _zero_affine_mud,
+    fraction_lcm,
+    interval_intersection,
+    interval_length,
+    is_dirac_interval,
+    iter_indices,
+    merge_breakpoints,
+    object_product,
+    object_sum,
+    point_in_interval,
+    scale_object_array,
+)
 
 
 def _default_decay_max(left, right, name: str):
@@ -73,17 +55,9 @@ def _default_decay_max(left, right, name: str):
     return max(left, right)
 
 
-def _array_is_static_zero(array: np.ndarray) -> bool:
-    return all(_is_static_zero(value) for value in array.flat)
-
-
 def _validate_decay(value, name: str) -> None:
     if _is_static_real(value) and not (0 <= value < 1):
         raise ValueError(f"{name} must satisfy 0 <= {name} < 1")
-
-
-def _iter_indices(shape: tuple[int, ...]) -> Iterable[Index]:
-    return product(*(range(n) for n in shape))
 
 
 @dataclass(frozen=True)
@@ -93,514 +67,6 @@ class BGDBlock:
     distribution: "MUD"
     translation: tuple[Fraction, ...]
     decay_factor: object
-
-
-def object_sum(values: Iterable, start=0):
-    result = start
-    for value in values:
-        result = result + value
-    return result
-
-
-def object_product(values: Iterable, start=1):
-    result = start
-    for value in values:
-        result = result * value
-    return result
-
-
-def _object_power(value, exponent: int):
-    if exponent < 0:
-        raise ValueError("exponent must be non-negative")
-    if exponent == 0:
-        return 1
-    if exponent == 1:
-        return value
-    return value**exponent
-
-
-def fraction_lcm(*values) -> Fraction:
-    if not values:
-        raise ValueError("fraction_lcm requires at least one value")
-
-    fractions = tuple(_as_fraction(value) for value in values)
-    for value in fractions:
-        if value <= 0:
-            raise ValueError("fraction_lcm values must be positive")
-
-    numerator_lcm = 1
-    denominator_gcd = fractions[0].denominator
-    for value in fractions:
-        numerator_lcm = _int_lcm(numerator_lcm, abs(value.numerator))
-        denominator_gcd = gcd(denominator_gcd, value.denominator)
-    return Fraction(numerator_lcm, denominator_gcd)
-
-
-def _int_lcm(left: int, right: int) -> int:
-    return abs(left * right) // gcd(left, right)
-
-
-def scale_object_array(array: np.ndarray, factor) -> np.ndarray:
-    scaled = np.empty(array.shape, dtype=object)
-    for index in iter_indices(array.shape):
-        scaled[index] = array[index] * factor
-    return scaled
-
-
-def iter_indices(shape: Sequence[int]) -> Iterable[Index]:
-    return _iter_indices(tuple(shape))
-
-
-def is_dirac_interval(left, right) -> bool:
-    return _as_fraction(left) == _as_fraction(right)
-
-
-def interval_length(left, right) -> Fraction:
-    left = _as_fraction(left)
-    right = _as_fraction(right)
-    if left > right:
-        raise ValueError("requires left <= right")
-    return right - left
-
-
-def interval_intersection(left_a, right_a, left_b, right_b) -> Interval | None:
-    left_a = _as_fraction(left_a)
-    right_a = _as_fraction(right_a)
-    left_b = _as_fraction(left_b)
-    right_b = _as_fraction(right_b)
-    if left_a > right_a or left_b > right_b:
-        raise ValueError("requires left <= right")
-
-    left = max(left_a, left_b)
-    right = min(right_a, right_b)
-    if left > right:
-        return None
-    return left, right
-
-
-def point_in_interval(point, left, right) -> bool:
-    point = _as_fraction(point)
-    left = _as_fraction(left)
-    right = _as_fraction(right)
-    if left > right:
-        raise ValueError("requires left <= right")
-    return left <= point <= right
-
-
-def merge_breakpoints(
-    *sequences: Sequence, preserve_dirac: bool = True
-) -> tuple[Fraction, ...]:
-    points = {_as_fraction(point) for sequence in sequences for point in sequence}
-    if len(points) < 1:
-        raise ValueError("merged breakpoints must contain at least one point")
-
-    dirac_points = set()
-    if preserve_dirac:
-        for sequence in sequences:
-            normalized = tuple(_as_fraction(point) for point in sequence)
-            for left, right in zip(normalized, normalized[1:]):
-                if left == right:
-                    dirac_points.add(left)
-
-    result = []
-    for point in sorted(points):
-        result.append(point)
-        if point in dirac_points:
-            result.append(point)
-    return tuple(result)
-
-
-def _support_is_covered(source: Breakpoints, target: Breakpoints) -> bool:
-    for source_dim, target_dim in zip(source, target):
-        if len(source_dim) == 1:
-            if not point_in_interval(source_dim[0], target_dim[0], target_dim[-1]):
-                return False
-            continue
-
-        if target_dim[0] > source_dim[0] or target_dim[-1] < source_dim[-1]:
-            return False
-
-        source_dirac_points = {
-            left for left, right in zip(source_dim, source_dim[1:]) if left == right
-        }
-        target_dirac_points = {
-            left for left, right in zip(target_dim, target_dim[1:]) if left == right
-        }
-        if not source_dirac_points.issubset(target_dirac_points):
-            return False
-
-    return True
-
-
-def _find_dirac_target_index(point: Fraction, target: tuple[Fraction, ...]) -> int | None:
-    for index, (left, right) in enumerate(zip(target, target[1:])):
-        if left == point and right == point:
-            return index
-    return None
-
-
-def _target_interval_owns_point(
-    point: Fraction, target: tuple[Fraction, ...], target_index: int
-) -> bool:
-    dirac_index = _find_dirac_target_index(point, target)
-    return target_index == dirac_index
-
-
-def _interval_overlap_ratio(
-    source_left: Fraction,
-    source_right: Fraction,
-    target: tuple[Fraction, ...],
-    target_index: int,
-) -> Fraction:
-    target_left = target[target_index]
-    target_right = target[target_index + 1]
-
-    if source_left == source_right:
-        if _target_interval_owns_point(source_left, target, target_index):
-            return Fraction(1)
-        return Fraction(0)
-
-    if target_left == target_right:
-        return Fraction(0)
-
-    intersection = interval_intersection(
-        source_left, source_right, target_left, target_right
-    )
-    if intersection is None:
-        return Fraction(0)
-
-    left, right = intersection
-    return (right - left) / (source_right - source_left)
-
-
-def _boundary_slice_mud(mud: "MUD", dim: int, side: str) -> "MUD | None":
-    if mud.is_empty:
-        return None
-
-    if side == "left":
-        interval_index = 0
-        if mud.S[dim][0] != mud.S[dim][1]:
-            return None
-        point = mud.S[dim][0]
-    elif side == "right":
-        interval_index = mud.shape[dim] - 1
-        if mud.S[dim][-2] != mud.S[dim][-1]:
-            return None
-        point = mud.S[dim][-1]
-    else:
-        raise ValueError("side must be 'left' or 'right'")
-
-    slicer = [slice(None)] * mud.ndim
-    slicer[dim] = interval_index
-    boundary_values = np.asarray(mud.P[tuple(slicer)], dtype=object).copy()
-    boundary_P = np.expand_dims(boundary_values, axis=dim)
-
-    boundary_S = list(mud.S)
-    boundary_S[dim] = (point, point)
-    return MUD(tuple(boundary_S), boundary_P)
-
-
-def _remove_boundary_slice(mud: "MUD", dim: int, side: str) -> "MUD":
-    if mud.is_empty:
-        return mud.copy()
-
-    if side == "left":
-        interval_index = 0
-        if mud.S[dim][0] != mud.S[dim][1]:
-            return mud.copy()
-        breakpoint_index = 0
-    elif side == "right":
-        interval_index = mud.shape[dim] - 1
-        if mud.S[dim][-2] != mud.S[dim][-1]:
-            return mud.copy()
-        breakpoint_index = len(mud.S[dim]) - 1
-    else:
-        raise ValueError("side must be 'left' or 'right'")
-
-    result_S = list(mud.S)
-    result_S[dim] = (
-        mud.S[dim][:breakpoint_index] + mud.S[dim][breakpoint_index + 1 :]
-    )
-    result_P = np.delete(mud.P, interval_index, axis=dim)
-    return MUD(tuple(result_S), result_P)
-
-
-def _move_slice_to_point(mud: "MUD", dim: int, point) -> "MUD":
-    point = _as_fraction(point)
-    moved_S = list(mud.S)
-    moved_S[dim] = (point, point)
-    return MUD(tuple(moved_S), mud.P.copy())
-
-
-def _shift_mud_dim(mud: "MUD", dim: int, offset) -> "MUD":
-    offset = _as_fraction(offset)
-    shifted_S = list(mud.S)
-    shifted_S[dim] = tuple(point + offset for point in mud.S[dim])
-    return MUD(tuple(shifted_S), mud.P.copy())
-
-
-def _zero_mud(S: Sequence[Sequence]) -> "MUD":
-    breakpoints = _normalize_breakpoints(S)
-    shape = _shape_from_breakpoints(breakpoints)
-    P = np.empty(shape, dtype=object)
-    P.fill(0)
-    return MUD(breakpoints, P)
-
-
-def _align_mud_dim_to_extent(
-    mud: "MUD", dim: int, left: Fraction, right: Fraction
-) -> "MUD":
-    if left > right:
-        raise ValueError("requires left <= right")
-
-    target_dim = merge_breakpoints((left, right), mud.S[dim], preserve_dirac=True)
-    target_S = list(mud.S)
-    target_S[dim] = target_dim
-
-    if mud.is_empty:
-        return _zero_mud(tuple(target_S))
-
-    if mud.S[dim][0] < left or mud.S[dim][-1] > right:
-        raise ValueError("mud support is outside the requested extent")
-
-    return mud.align(tuple(target_S))
-
-
-def _ceil_fraction(value: Fraction) -> int:
-    return -(-value.numerator // value.denominator)
-
-
-def _point_satisfies(point: Fraction, op: str, threshold: Fraction) -> bool:
-    if op == ">":
-        return point > threshold
-    if op == ">=":
-        return point >= threshold
-    if op == "<":
-        return point < threshold
-    if op == "<=":
-        return point <= threshold
-    raise ValueError("op must be one of >, >=, <, <=")
-
-
-def _restrict_interval(left: Fraction, right: Fraction, op: str, threshold: Fraction):
-    if left == right:
-        if _point_satisfies(left, op, threshold):
-            return left, right, Fraction(1)
-        return None
-
-    if op in (">", ">="):
-        new_left = max(left, threshold)
-        new_right = right
-    elif op in ("<", "<="):
-        new_left = left
-        new_right = min(right, threshold)
-    else:
-        raise ValueError("op must be one of >, >=, <, <=")
-
-    if new_left >= new_right:
-        return None
-    return new_left, new_right, (new_right - new_left) / (right - left)
-
-
-@dataclass(frozen=True)
-class MUD:
-    """Mixture Uniform Distribution.
-
-    P stores block masses, not densities. Values are kept as Python objects so
-    solver variables can participate in later symbolic arithmetic.
-    """
-
-    S: Breakpoints
-    P: np.ndarray
-
-    def __init__(self, S: Sequence[Sequence], P):
-        breakpoints = _normalize_breakpoints(S)
-        masses = _object_array(P, _shape_from_breakpoints(breakpoints), "P")
-
-        object.__setattr__(self, "S", breakpoints)
-        object.__setattr__(self, "P", masses)
-
-    @property
-    def ndim(self) -> int:
-        return len(self.S)
-
-    @property
-    def shape(self) -> tuple[int, ...]:
-        return self.P.shape
-
-    @property
-    def block_lengths(self) -> tuple[Fraction, ...]:
-        return tuple(s[-1] - s[0] for s in self.S)
-
-    @property
-    def is_empty(self) -> bool:
-        return any(length == 0 for length in self.shape)
-
-    @classmethod
-    def empty_like_restrict(cls, S: Sequence[Sequence], dim: int, point) -> MUD:
-        breakpoints = _normalize_breakpoints(S)
-        if dim < 0 or dim >= len(breakpoints):
-            raise ValueError("dim out of range")
-
-        empty_S = []
-        for current_dim, seq in enumerate(breakpoints):
-            if current_dim == dim:
-                empty_S.append((_as_fraction(point),))
-            else:
-                empty_S.append((seq[0], seq[-1]))
-
-        shape = _shape_from_breakpoints(tuple(empty_S))
-        empty_P = np.empty(shape, dtype=object)
-        empty_P.fill(0)
-        return MUD(tuple(empty_S), empty_P)
-
-    def mass(self):
-        return object_sum(self.P.flat)
-
-    def copy(self) -> MUD:
-        return MUD(self.S, self.P.copy())
-
-    def scale(self, factor) -> MUD:
-        return MUD(self.S, scale_object_array(self.P, factor))
-
-    def __mul__(self, factor) -> MUD:
-        return self.scale(factor)
-
-    def __rmul__(self, factor) -> MUD:
-        return self.scale(factor)
-
-    def add(self, other: MUD) -> MUD:
-        if not isinstance(other, MUD):
-            raise TypeError("other must be a MUD")
-        if other.ndim != self.ndim:
-            raise ValueError(f"other.ndim must be {self.ndim}")
-
-        target = tuple(
-            merge_breakpoints(self.S[dim], other.S[dim], preserve_dirac=True)
-            for dim in range(self.ndim)
-        )
-        left = self.align(target)
-        right = other.align(target)
-
-        result_P = np.empty(left.shape, dtype=object)
-        for index in iter_indices(left.shape):
-            result_P[index] = left.P[index] + right.P[index]
-        return MUD(target, result_P)
-
-    def __add__(self, other: MUD) -> MUD:
-        return self.add(other)
-
-    def independent_product(self, other: MUD) -> MUD:
-        if not isinstance(other, MUD):
-            raise TypeError("other must be a MUD")
-
-        left_shape = self.shape + (1,) * other.ndim
-        right_shape = (1,) * self.ndim + other.shape
-        result_P = self.P.reshape(left_shape) * other.P.reshape(right_shape)
-        return MUD(self.S + other.S, result_P)
-
-    def marginalize(self, dim: int) -> MUD:
-        if dim < 0 or dim >= self.ndim:
-            raise ValueError("dim out of range")
-        if self.ndim == 1:
-            raise ValueError("cannot marginalize the only MUD dimension")
-
-        result_S = self.S[:dim] + self.S[dim + 1 :]
-        result_shape = self.shape[:dim] + self.shape[dim + 1 :]
-        result_P = np.empty(result_shape, dtype=object)
-        result_P.fill(0)
-
-        for index in iter_indices(self.shape):
-            result_index = index[:dim] + index[dim + 1 :]
-            result_P[result_index] = result_P[result_index] + self.P[index]
-
-        return MUD(result_S, result_P)
-
-    def permute_dims(self, order: Sequence[int]) -> MUD:
-        order = self._validate_permutation(order, self.ndim)
-        result_S = tuple(self.S[dim] for dim in order)
-        result_P = np.transpose(self.P, axes=order).copy()
-        return MUD(result_S, result_P)
-
-    def restrict(self, dim: int, op: str, c) -> MUD:
-        if dim < 0 or dim >= self.ndim:
-            raise ValueError("dim out of range")
-        threshold = _as_fraction(c)
-
-        if self.is_empty:
-            return MUD.empty_like_restrict(self.S, dim, threshold)
-
-        restricted = []
-        for interval_index in range(self.shape[dim]):
-            left = self.S[dim][interval_index]
-            right = self.S[dim][interval_index + 1]
-            result = _restrict_interval(left, right, op, threshold)
-            if result is not None:
-                restricted.append((interval_index, *result))
-
-        if not restricted:
-            return MUD.empty_like_restrict(self.S, dim, threshold)
-
-        pieces = []
-        for interval_index, new_left, new_right, ratio in restricted:
-            slicer = [slice(None)] * self.ndim
-            slicer[dim] = interval_index
-            piece_P = np.expand_dims(
-                np.asarray(self.P[tuple(slicer)], dtype=object).copy(), axis=dim
-            )
-            piece_P = scale_object_array(piece_P, ratio)
-
-            piece_S = list(self.S)
-            piece_S[dim] = (new_left, new_right)
-            pieces.append(MUD(tuple(piece_S), piece_P))
-
-        result = pieces[0]
-        for piece in pieces[1:]:
-            result = result + piece
-        return result
-
-    def align(self, target_S: Sequence[Sequence]) -> MUD:
-        target = _normalize_breakpoints(target_S)
-        if len(target) != self.ndim:
-            raise ValueError(f"target_S must contain {self.ndim} dimensions")
-        if not _support_is_covered(self.S, target):
-            raise ValueError("target_S must cover the source support")
-
-        target_shape = _shape_from_breakpoints(target)
-        target_P = np.empty(target_shape, dtype=object)
-        target_P.fill(0)
-
-        for source_index in iter_indices(self.shape):
-            source_mass = self.P[source_index]
-            per_dim_ratios = []
-            for dim, interval_index in enumerate(source_index):
-                source_left = self.S[dim][interval_index]
-                source_right = self.S[dim][interval_index + 1]
-                ratios = [
-                    _interval_overlap_ratio(source_left, source_right, target[dim], j)
-                    for j in range(target_shape[dim])
-                ]
-                per_dim_ratios.append(ratios)
-
-            for target_index in iter_indices(target_shape):
-                ratio = object_product(
-                    per_dim_ratios[dim][target_index[dim]]
-                    for dim in range(self.ndim)
-                )
-                if ratio == 0:
-                    continue
-                target_P[target_index] = target_P[target_index] + source_mass * ratio
-
-        return MUD(target, target_P)
-
-    @staticmethod
-    def _validate_permutation(order: Sequence[int], ndim: int) -> tuple[int, ...]:
-        order_tuple = tuple(order)
-        if len(order_tuple) != ndim:
-            raise ValueError(f"order must contain {ndim} dimensions")
-        if set(order_tuple) != set(range(ndim)):
-            raise ValueError("order must be a permutation of dimensions")
-        return order_tuple
 
 
 @dataclass(frozen=True)
@@ -1044,6 +510,178 @@ class BGD:
         joint = rest.independent_product(new)
         order = tuple(range(dim)) + (self.ndim - 1,) + tuple(range(dim, self.ndim - 1))
         return joint.permute_dims(order).standardize()
+
+    def convolve_uniform(self, dim: int, low, high, *, max_fn=None, bound_factory=None):
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+        if max_fn is not None and bound_factory is not None:
+            raise ValueError("provide either max_fn or bound_factory, not both")
+
+        noise_left = _as_fraction(low)
+        noise_right = _as_fraction(high)
+        if noise_left >= noise_right:
+            raise ValueError("requires low < high")
+        if self.left_lengths[dim] <= 0 or self.right_lengths[dim] <= 0:
+            raise ValueError("edge period lengths must be positive")
+
+        result_E = np.empty(self.E.shape, dtype=object)
+        constraints = []
+        for center_index in self._line_center_indices(dim):
+            for target_axis in range(3):
+                target_index = self._replace_index(center_index, dim, target_axis)
+                block_bound_factory = None
+                if bound_factory is not None:
+                    block_bound_factory = self._prefixed_bound_factory(
+                        bound_factory, f"E{target_index}"
+                    )
+                result = self._convolve_uniform_target_block(
+                    center_index,
+                    target_axis,
+                    dim,
+                    noise_left,
+                    noise_right,
+                    max_fn=max_fn,
+                    bound_factory=block_bound_factory,
+                )
+                if bound_factory is None:
+                    result_E[target_index] = result
+                else:
+                    result_E[target_index], block_constraints = result
+                    constraints.extend(block_constraints)
+
+        result = BGD(result_E, self.alpha, self.beta).standardize()
+        if bound_factory is None:
+            return result
+        return result, constraints
+
+    def _convolve_uniform_target_block(
+        self,
+        center_index: Index,
+        target_axis: int,
+        dim: int,
+        noise_left: Fraction,
+        noise_right: Fraction,
+        *,
+        max_fn,
+        bound_factory,
+    ):
+        target_index = self._replace_index(center_index, dim, target_axis)
+        target_left, target_right = self._convolve_uniform_target_interval(
+            dim, target_axis, noise_left, noise_right
+        )
+        target_S = self._convolve_uniform_target_S(
+            target_index, dim, target_left, target_right
+        )
+        accumulated = _zero_affine_mud(target_S, dim)
+
+        for source_k in self._convolve_uniform_source_blocks(
+            dim, target_axis, noise_left, noise_right, target_left, target_right
+        ):
+            source_axis = 0 if source_k < 0 else 2 if source_k > 0 else 1
+            source_index = self._replace_index(center_index, dim, source_axis)
+            source_left, source_right = self._block_interval_for_dim(dim, source_k)
+            source = self.E[source_index].scale(
+                self._dim_decay_factor_for_block(dim, source_k)
+            )
+
+            if source_index != (1,) * self.ndim:
+                source = _shift_mud_dim(source, dim, source_left)
+
+            piece = source.convolve_uniform(dim, noise_left, noise_right)
+            piece = piece.restrict(dim, ">=", target_left)
+            piece = piece.restrict(dim, "<=", target_right)
+            if piece.is_empty:
+                continue
+
+            if target_index != (1,) * self.ndim:
+                piece = _shift_grid_dim(piece, dim, -target_left)
+            accumulated = accumulated + piece
+
+        return accumulated.to_mass_mud_upper(
+            max_fn=max_fn, bound_factory=bound_factory
+        )
+
+    def _convolve_uniform_target_S(
+        self, index: Index, dim: int, target_left: Fraction, target_right: Fraction
+    ) -> Breakpoints:
+        target_S = list(self.E[index].S)
+        if index == (1,) * self.ndim:
+            target_S[dim] = (target_left, target_right)
+        else:
+            target_S[dim] = (Fraction(0), target_right - target_left)
+        return tuple(target_S)
+
+    def _convolve_uniform_target_interval(
+        self,
+        dim: int,
+        target_axis: int,
+        noise_left: Fraction,
+        noise_right: Fraction,
+    ) -> Interval:
+        center_left = self.center_lefts[dim] + noise_left
+        center_right = self.center_rights[dim] + noise_right
+        if target_axis == 0:
+            return center_left - self.left_lengths[dim], center_left
+        if target_axis == 1:
+            return center_left, center_right
+        if target_axis == 2:
+            return center_right, center_right + self.right_lengths[dim]
+        raise ValueError("target_axis must be 0, 1, or 2")
+
+    def _convolve_uniform_source_blocks(
+        self,
+        dim: int,
+        target_axis: int,
+        noise_left: Fraction,
+        noise_right: Fraction,
+        target_left: Fraction,
+        target_right: Fraction,
+    ) -> Iterable[int]:
+        if target_axis in (0, 1):
+            block = -1
+            while True:
+                source_left, source_right = self._block_interval_for_dim(dim, block)
+                if source_right + noise_right <= target_left:
+                    break
+                if source_left + noise_left < target_right:
+                    yield block
+                block -= 1
+
+        if target_axis == 1:
+            yield 0
+
+        if target_axis in (1, 2):
+            block = 1
+            while True:
+                source_left, source_right = self._block_interval_for_dim(dim, block)
+                if source_left + noise_left >= target_right:
+                    break
+                if source_right + noise_right > target_left:
+                    yield block
+                block += 1
+
+    def _block_interval_for_dim(self, dim: int, block: int) -> Interval:
+        if block < 0:
+            left = self.center_lefts[dim] + block * self.left_lengths[dim]
+            return left, left + self.left_lengths[dim]
+        if block > 0:
+            left = self.center_rights[dim] + (block - 1) * self.right_lengths[dim]
+            return left, left + self.right_lengths[dim]
+        return self.center_lefts[dim], self.center_rights[dim]
+
+    def _dim_decay_factor_for_block(self, dim: int, block: int):
+        if block < 0:
+            return _object_power(self.alpha[dim], -block - 1)
+        if block > 0:
+            return _object_power(self.beta[dim], block - 1)
+        return Fraction(1)
+
+    @staticmethod
+    def _prefixed_bound_factory(bound_factory, prefix: str):
+        def wrapped(name, left, right):
+            return bound_factory(f"{prefix}_{name}", left, right)
+
+        return wrapped
 
     def _tail_factor(self, direction: Direction):
         self._validate_direction(direction)
