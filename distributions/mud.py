@@ -344,7 +344,7 @@ def _zero_affine_mud(S: Sequence[Sequence], affine_dim: int) -> "AffineMUD":
     breakpoints = _normalize_breakpoints(S)
     shape = _shape_from_breakpoints(breakpoints)
     P = np.empty(shape, dtype=object)
-    P.fill(AffineCell(0, 0))
+    P.fill(AffineCell(0, 0, sloped=False))
     return AffineMUD(breakpoints, P, affine_dim)
 
 
@@ -444,6 +444,20 @@ def _uniform_convolution_density_at(
     return mass * (overlap_right - overlap_left) / (source_length * noise_length)
 
 
+def _uniform_convolution_overlap_width(
+    source_left: Fraction,
+    source_right: Fraction,
+    noise_left: Fraction,
+    noise_right: Fraction,
+    point: Fraction,
+) -> Fraction:
+    overlap_left = max(source_left, point - noise_right)
+    overlap_right = min(source_right, point - noise_left)
+    if overlap_left >= overlap_right:
+        return Fraction(0)
+    return overlap_right - overlap_left
+
+
 def _uniform_convolution_cell(
     mass,
     source_left: Fraction,
@@ -453,22 +467,34 @@ def _uniform_convolution_cell(
     target_left: Fraction,
     target_right: Fraction,
 ) -> AffineCell:
+    if _is_static_zero(mass):
+        return AffineCell(0, 0, sloped=False)
+
     noise_length = noise_right - noise_left
     if source_left == source_right:
         support_left = source_left + noise_left
         support_right = source_left + noise_right
         if target_left >= support_left and target_right <= support_right:
             value = mass / noise_length
-            return AffineCell(value, value)
-        return AffineCell(0, 0)
+            return AffineCell(value, value, sloped=False)
+        return AffineCell(0, 0, sloped=False)
 
+    left_value = _uniform_convolution_density_at(
+        mass, source_left, source_right, noise_left, noise_right, target_left
+    )
+    right_value = _uniform_convolution_density_at(
+        mass, source_left, source_right, noise_left, noise_right, target_right
+    )
+    left_width = _uniform_convolution_overlap_width(
+        source_left, source_right, noise_left, noise_right, target_left
+    )
+    right_width = _uniform_convolution_overlap_width(
+        source_left, source_right, noise_left, noise_right, target_right
+    )
     return AffineCell(
-        _uniform_convolution_density_at(
-            mass, source_left, source_right, noise_left, noise_right, target_left
-        ),
-        _uniform_convolution_density_at(
-            mass, source_left, source_right, noise_left, noise_right, target_right
-        ),
+        left_value,
+        right_value,
+        sloped=left_width != right_width,
     )
 
 
@@ -526,6 +552,7 @@ class AffineCell:
 
     left: object
     right: object
+    sloped: bool = False
 
 
 @dataclass(frozen=True)
@@ -535,13 +562,20 @@ class AffineCellOps(CellOps):
     affine_dim: int
 
     def zero(self):
-        return AffineCell(0, 0)
+        return AffineCell(0, 0, sloped=False)
 
     def add(self, left: AffineCell, right: AffineCell):
-        return AffineCell(left.left + right.left, left.right + right.right)
+        return AffineCell(
+            left.left + right.left,
+            left.right + right.right,
+            sloped=left.sloped or right.sloped,
+        )
 
     def scale(self, value: AffineCell, factor):
-        return AffineCell(value.left * factor, value.right * factor)
+        sloped = value.sloped
+        if _is_static_zero(factor):
+            sloped = False
+        return AffineCell(value.left * factor, value.right * factor, sloped=sloped)
 
     def product(self, left, right):
         raise NotImplementedError("AffineMUD independent_product is not defined")
@@ -585,6 +619,7 @@ class AffineCellOps(CellOps):
         return AffineCell(
             value.left + slope * (target_left - source_left),
             value.left + slope * (target_right - source_left),
+            sloped=value.sloped,
         )
 
 
@@ -954,16 +989,25 @@ class MassMUD(GridMUD):
                 result_index = tuple(result_index)
                 old = result_P[result_index]
                 result_P[result_index] = AffineCell(
-                    old.left + contribution.left, old.right + contribution.right
+                    old.left + contribution.left,
+                    old.right + contribution.right,
+                    sloped=old.sloped or contribution.sloped,
                 )
 
         return AffineMUD(result_S, result_P, dim)
 
     def convolve_uniform_upper(
-        self, dim: int, low, high, *, max_fn=None, bound_factory=None
+        self,
+        dim: int,
+        low,
+        high,
+        *,
+        max_fn=None,
+        bound_factory=None,
+        max_interval=None,
     ):
         return self.convolve_uniform(dim, low, high).to_mass_mud_upper(
-            max_fn=max_fn, bound_factory=bound_factory
+            max_fn=max_fn, bound_factory=bound_factory, max_interval=max_interval
         )
 
     def _empty_like_convolve_uniform(
@@ -1037,9 +1081,39 @@ class AffineMUD(GridMUD):
         )
         return AffineMUD(result_S, result_P, affine_dim)
 
-    def to_mass_mud_upper(self, *, max_fn=None, bound_factory=None):
+    def refine_affine(self, max_interval) -> "AffineMUD":
+        max_interval = _as_fraction(max_interval)
+        if max_interval <= 0:
+            raise ValueError("max_interval must be positive")
+        if self.is_empty:
+            return self.copy()
+
+        refined_dim = [self.S[self.affine_dim][0]]
+        for interval_index, (left, right) in enumerate(
+            zip(self.S[self.affine_dim], self.S[self.affine_dim][1:])
+        ):
+            length = right - left
+            if (
+                length > max_interval
+                and self._affine_interval_has_sloped_cell(interval_index)
+            ):
+                pieces = _ceil_fraction(length / max_interval)
+                for step in range(1, pieces + 1):
+                    refined_dim.append(left + length * Fraction(step, pieces))
+            else:
+                refined_dim.append(right)
+
+        target_S = list(self.S)
+        target_S[self.affine_dim] = tuple(refined_dim)
+        return self.align(tuple(target_S))
+
+    def to_mass_mud_upper(self, *, max_fn=None, bound_factory=None, max_interval=None):
         if max_fn is not None and bound_factory is not None:
             raise ValueError("provide either max_fn or bound_factory, not both")
+        if max_interval is not None:
+            return self.refine_affine(max_interval).to_mass_mud_upper(
+                max_fn=max_fn, bound_factory=bound_factory
+            )
         if max_fn is None and bound_factory is None:
             max_fn = _default_endpoint_max
 
@@ -1065,6 +1139,12 @@ class AffineMUD(GridMUD):
 
     def _new(self, S: Sequence[Sequence], P):
         return AffineMUD(S, P, self.affine_dim)
+
+    def _affine_interval_has_sloped_cell(self, interval_index: int) -> bool:
+        for index in iter_indices(self.shape):
+            if index[self.affine_dim] == interval_index and self.P[index].sloped:
+                return True
+        return False
 
 
 def _default_endpoint_max(left, right, name: str):

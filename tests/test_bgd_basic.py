@@ -334,7 +334,10 @@ class TestBGDBasic(unittest.TestCase):
         self.assertIsInstance(result, AffineMUD)
         self.assertEqual(result.affine_dim, 0)
         self.assertEqual(result.S, ((Fraction(0), Fraction(1), Fraction(2)),))
-        self.assertEqual(result.P.tolist(), [AffineCell(0, 1), AffineCell(1, 0)])
+        self.assertEqual(
+            result.P.tolist(),
+            [AffineCell(0, 1, sloped=True), AffineCell(1, 0, sloped=True)],
+        )
         self.assertEqual(result.mass(), Fraction(1))
 
     def test_mud_convolve_uniform_continuous_interval_returns_affine_trapezoid(self):
@@ -346,7 +349,11 @@ class TestBGDBasic(unittest.TestCase):
         )
         self.assertEqual(
             result.P.tolist(),
-            [AffineCell(0, 5), AffineCell(5, 5), AffineCell(5, 0)],
+            [
+                AffineCell(0, 5, sloped=True),
+                AffineCell(5, 5, sloped=False),
+                AffineCell(5, 0, sloped=True),
+            ],
         )
         self.assertEqual(result.mass(), Fraction(10))
 
@@ -354,14 +361,17 @@ class TestBGDBasic(unittest.TestCase):
         result = MUD([[1, 1]], [6]).convolve_uniform(0, 0, 2)
 
         self.assertEqual(result.S, ((Fraction(1), Fraction(3)),))
-        self.assertEqual(result.P.tolist(), [AffineCell(3, 3)])
+        self.assertEqual(result.P.tolist(), [AffineCell(3, 3, sloped=False)])
         self.assertEqual(result.mass(), Fraction(6))
 
     def test_mud_convolve_uniform_dirac_does_not_leak_to_adjacent_cell(self):
         result = MUD([[0, 0, 1]], [2, 3]).convolve_uniform(0, 0, 1)
 
         self.assertEqual(result.S, ((Fraction(0), Fraction(1), Fraction(2)),))
-        self.assertEqual(result.P.tolist(), [AffineCell(2, 5), AffineCell(3, 0)])
+        self.assertEqual(
+            result.P.tolist(),
+            [AffineCell(2, 5, sloped=True), AffineCell(3, 0, sloped=True)],
+        )
         self.assertEqual(result.mass(), Fraction(5))
 
     def test_mud_convolve_uniform_multidimensional_single_axis(self):
@@ -374,7 +384,10 @@ class TestBGDBasic(unittest.TestCase):
                 (Fraction(10), Fraction(12)),
             ),
         )
-        self.assertEqual(result.P.tolist(), [[AffineCell(0, 4)], [AffineCell(4, 0)]])
+        self.assertEqual(
+            result.P.tolist(),
+            [[AffineCell(0, 4, sloped=True)], [AffineCell(4, 0, sloped=True)]],
+        )
         self.assertEqual(result.mass(), Fraction(4))
 
     def test_mud_convolve_uniform_keeps_object_mass_expression(self):
@@ -409,6 +422,83 @@ class TestBGDBasic(unittest.TestCase):
         self.assertIsInstance(result, MUD)
         self.assertEqual(result.S, ((Fraction(0), Fraction(1), Fraction(2)),))
         self.assertEqual(result.P.tolist(), [Fraction(1), Fraction(1)])
+
+    def test_mud_convolve_uniform_upper_refines_sloped_cells_by_max_interval(self):
+        result = MUD([[0, 1]], [1]).convolve_uniform_upper(
+            0, 0, 1, max_interval=Fraction(1, 2)
+        )
+
+        self.assertEqual(
+            result.S,
+            (
+                (
+                    Fraction(0),
+                    Fraction(1, 2),
+                    Fraction(1),
+                    Fraction(3, 2),
+                    Fraction(2),
+                ),
+            ),
+        )
+        self.assertEqual(
+            result.P.tolist(),
+            [Fraction(1, 4), Fraction(1, 2), Fraction(1, 2), Fraction(1, 4)],
+        )
+        self.assertEqual(result.mass(), Fraction(3, 2))
+
+    def test_affine_mud_refine_skips_platform_cells(self):
+        result = MUD([[0, 2]], [10]).convolve_uniform_upper(
+            0, 0, 1, max_interval=Fraction(1, 2)
+        )
+
+        self.assertEqual(
+            result.S,
+            (
+                (
+                    Fraction(0),
+                    Fraction(1, 2),
+                    Fraction(1),
+                    Fraction(2),
+                    Fraction(5, 2),
+                    Fraction(3),
+                ),
+            ),
+        )
+        self.assertEqual(
+            result.P.tolist(),
+            [
+                Fraction(5, 4),
+                Fraction(5, 2),
+                Fraction(5),
+                Fraction(5, 2),
+                Fraction(5, 4),
+            ],
+        )
+
+    def test_affine_mud_refine_skips_static_zero_slopes(self):
+        result = MUD([[0, 1]], [0]).convolve_uniform_upper(
+            0, 0, 1, max_interval=Fraction(1, 2)
+        )
+
+        self.assertEqual(result.S, ((Fraction(0), Fraction(1), Fraction(2)),))
+        self.assertEqual(result.P.tolist(), [Fraction(0), Fraction(0)])
+
+    def test_affine_mud_refine_uses_sloped_flag_not_symbol_comparison(self):
+        def bound_factory(name, left, right):
+            upper = Symbol(f"h_{name}")
+            return upper, [(upper, ">=", left), (upper, ">=", right)]
+
+        flat, flat_constraints = AffineMUD(
+            [[0, 2]], [AffineCell(Symbol("l"), Symbol("r"), sloped=False)], 0
+        ).to_mass_mud_upper(bound_factory=bound_factory, max_interval=1)
+        sloped, sloped_constraints = AffineMUD(
+            [[0, 2]], [AffineCell(Symbol("l"), Symbol("r"), sloped=True)], 0
+        ).to_mass_mud_upper(bound_factory=bound_factory, max_interval=1)
+
+        self.assertEqual(flat.S, ((Fraction(0), Fraction(2)),))
+        self.assertEqual(len(flat_constraints), 2)
+        self.assertEqual(sloped.S, ((Fraction(0), Fraction(1), Fraction(2)),))
+        self.assertEqual(len(sloped_constraints), 4)
 
     def test_affine_mud_mass_integrates_endpoint_values(self):
         mud = AffineMUD([[0, 2]], [AffineCell(1, 3)], affine_dim=0)
@@ -863,6 +953,29 @@ class TestBGDBasic(unittest.TestCase):
         self.assertEqual(result.E[1].P.tolist(), [Fraction(1), Fraction(1)])
         self.assertEqual(result.E[0].P.tolist(), [Fraction(0)])
         self.assertEqual(result.E[2].P.tolist(), [Fraction(0)])
+
+    def test_bgd_convolve_uniform_passes_max_interval_to_upper_bound(self):
+        bgd = make_1d_bgd(center_mass=1, alpha=0, beta=0)
+
+        result = bgd.convolve_uniform(0, 0, 1, max_interval=Fraction(1, 2))
+
+        self.assertEqual(
+            result.E[1].S,
+            (
+                (
+                    Fraction(0),
+                    Fraction(1, 2),
+                    Fraction(1),
+                    Fraction(3, 2),
+                    Fraction(2),
+                ),
+            ),
+        )
+        self.assertEqual(
+            result.E[1].P.tolist(),
+            [Fraction(1, 4), Fraction(1, 2), Fraction(1, 2), Fraction(1, 4)],
+        )
+        self.assertEqual(result.mass(), Fraction(3, 2))
 
     def test_bgd_convolve_uniform_center_receives_left_tail_contribution(self):
         bgd = make_1d_bgd(left_mass=2, center_mass=0, right_mass=0, alpha=0, beta=0)

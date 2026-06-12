@@ -511,7 +511,16 @@ class BGD:
         order = tuple(range(dim)) + (self.ndim - 1,) + tuple(range(dim, self.ndim - 1))
         return joint.permute_dims(order).standardize()
 
-    def convolve_uniform(self, dim: int, low, high, *, max_fn=None, bound_factory=None):
+    def convolve_uniform(
+        self,
+        dim: int,
+        low,
+        high,
+        *,
+        max_fn=None,
+        bound_factory=None,
+        max_interval=None,
+    ):
         if dim < 0 or dim >= self.ndim:
             raise ValueError("dim out of range")
         if max_fn is not None and bound_factory is not None:
@@ -542,6 +551,7 @@ class BGD:
                     noise_right,
                     max_fn=max_fn,
                     bound_factory=block_bound_factory,
+                    max_interval=max_interval,
                 )
                 if bound_factory is None:
                     result_E[target_index] = result
@@ -564,6 +574,7 @@ class BGD:
         *,
         max_fn,
         bound_factory,
+        max_interval,
     ):
         target_index = self._replace_index(center_index, dim, target_axis)
         target_left, target_right = self._convolve_uniform_target_interval(
@@ -598,7 +609,7 @@ class BGD:
             accumulated = accumulated + piece
 
         return accumulated.to_mass_mud_upper(
-            max_fn=max_fn, bound_factory=bound_factory
+            max_fn=max_fn, bound_factory=bound_factory, max_interval=max_interval
         )
 
     def _convolve_uniform_target_S(
