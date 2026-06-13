@@ -1,4 +1,4 @@
-from distributions.bgd import MUD, BGD
+from distributions import MUD, BGD
 from collections.abc import Sequence
 from fractions import Fraction
 import numpy as np
