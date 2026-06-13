@@ -141,8 +141,7 @@ def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=No
         block_length_f = float(block_length)
 
         # ---------------- left exponential tail upper bound ----------------
-        # For x <= center_left:
-        #   f(x) <= P0_left * exp(-rate_left * (center_left - x))
+        # For x <= center_left: f(x) <= P0_left * exp(-rate_left * (center_left - x))
         #
         # u = mean - center_left >= 0
         # d = (u + sqrt(u^2 + 4 * var)) / 2
@@ -186,8 +185,7 @@ def normal_to_bgd(mean, var, mode, center_subdivision=None, block_subdivision=No
         left = MUD([block_points], np.array(left_masses, dtype=object))
 
         # ---------------- right exponential tail upper bound ----------------
-        # For x >= center_right:
-        #   f(x) <= P0_right * exp(-rate_right * (x - center_right))
+        # For x >= center_right: f(x) <= P0_right * exp(-rate_right * (x - center_right))
 
         u_right = float(center_right) - mean_f
 
