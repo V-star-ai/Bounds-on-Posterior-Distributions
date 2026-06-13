@@ -1,133 +1,110 @@
-from fractions import Fraction
-from typing import Union, Optional
+import re
+from parsers.parser_utils import parse_number, parse_object_sequence_string
 
 
-def parse_number(s: str, forced_type: Optional[str] = None) -> Union[int, float, Fraction]:
-    """Parse a numeric string into int / float / Fraction, optionally forced."""
-    
-    if forced_type is not None:
-        forced_type = forced_type.lower()
-        if forced_type == "int":
-            return int(s)
-        if forced_type == "float":
-            return float(s)
-        if forced_type == "fraction":
-            return Fraction(s)
-        raise ValueError(f"Unknown forced type: {forced_type}")
-
-    if "/" in s:
-        return Fraction(s)
-    if "." in s:
-        return float(s)
-    return int(s)
-
-
-def split_top_level(s: str, sep: str = ",") -> list[str]:
-    """Split at top-level separators, ignoring separators inside [], (), and {}."""
-
-    parts = []
-    buf = []
-    d_sq = d_rd = d_cu = 0
-
-    for ch in s:
-        if ch == "[":
-            d_sq += 1
-            buf.append(ch)
-        elif ch == "]":
-            d_sq -= 1
-            if d_sq < 0:
-                raise ValueError("Unbalanced ']'")
-            buf.append(ch)
-        elif ch == "(":
-            d_rd += 1
-            buf.append(ch)
-        elif ch == ")":
-            d_rd -= 1
-            if d_rd < 0:
-                raise ValueError("Unbalanced ')'")
-            buf.append(ch)
-        elif ch == "{":
-            d_cu += 1
-            buf.append(ch)
-        elif ch == "}":
-            d_cu -= 1
-            if d_cu < 0:
-                raise ValueError("Unbalanced '}'")
-            buf.append(ch)
-        elif ch == sep and d_sq == 0 and d_rd == 0 and d_cu == 0:
-            part = "".join(buf)
-            if not part:
-                raise ValueError(f"Empty item encountered when splitting by '{sep}'")
-            parts.append(part)
-            buf = []
-        else:
-            buf.append(ch)
-
-    if d_sq != 0 or d_rd != 0 or d_cu != 0:
-        raise ValueError("Unbalanced brackets/braces/parentheses")
-
-    tail = "".join(buf)
-    if tail:
-        parts.append(tail)
-    elif s:
-        raise ValueError(f"Trailing '{sep}' or empty item encountered")
-
-    return parts
-
-
-def parse_object_sequence_string(s: str, type_map: Optional[dict[int, str]] = None):
+def parse_mapping_string(s: str):
     """
-    Parse a top-level comma-separated string into Python objects.
-
-    type_map:
-        {i: type} forces numeric parsing for the i-th top-level item.
-        Negative indices are allowed, e.g. -1 means the last item.
-        type ∈ {'int', 'float', 'fraction'}.
-
-    Example:
-        s = '[[1.2,1,2,3],[3.4,5.5,1]],(1,2)'
-        type_map = {0: 'fraction'}
-
-        Result:
-        (
-            [[Fraction(6,5), Fraction(1,1), Fraction(2,1), Fraction(3,1)],
-             [Fraction(17,5), Fraction(11,2), Fraction(1,1)]],
-            (1, 2)
-        )
+    Parse a mapping string into a Python dict.
+    Keys and Values must be numbers.
     """
-    
+
     s = "".join(s.split())
-
     if s == "":
-        return tuple()
+        return {}
 
-    parts = split_top_level(s)
-    n = len(parts)
+    if s[0] != "{" or s[-1] != "}":
+        raise ValueError("Mapping string must be enclosed in {...}")
 
-    type_map = {} if type_map is None else type_map
-    norm_type_map = {}
-    for k, v in type_map.items():
-        k = k + n if k < 0 else k
-        if not (0 <= k < n):
-            raise IndexError(f"type_map index {k} out of range for {n} top-level item(s)")
-        norm_type_map[k] = v
+    inner = s[1:-1]
+    if inner == "":
+        return {}
 
-    def parse_obj(x: str, forced_type = None):
-        if not x:
-            raise ValueError("Empty item encountered")
+    result = {}
+    for item in inner.split(","):
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid mapping format: {s}")
 
-        if x[0] == "[" and x[-1] == "]":
-            inner = x[1:-1]
-            return [] if inner == "" else [parse_obj(p, forced_type) for p in split_top_level(inner)]
+        k = parse_number(parts[0])
+        v = parse_number(parts[1])
+        if v < 0:
+            raise ValueError("Probability values must be nonnegative.")
+        elif v > 0:
+            # Drop entries with zero probability.
+            result[k] = v
 
-        if x[0] == "(" and x[-1] == ")":
-            inner = x[1:-1]
-            return () if inner == "" else tuple(parse_obj(p, forced_type) for p in split_top_level(inner))
+    return result
 
-        if x[0] == "{" and x[-1] == "}":
-            inner = x[1:-1]
-            return set() if inner == "" else {parse_obj(p, forced_type) for p in split_top_level(inner)}
 
-        return parse_number(x, forced_type)
+def parse_prior_line(line: str) -> tuple[tuple[str, ...], tuple]:
+    """
+    Parse one prior assignment line, e.g.
+      "x=0"
+      "x~Normal(0,1)"
+      "x~Uniform(0,1)"
+      "x~Exponential(1)"
+      "x~{0:0.2,1:0.5,3:0.3}"
 
-    return tuple(parse_obj(part, norm_type_map.get(i)) for i, part in enumerate(parts))
+    Returns: (vars_tuple, dist_obj)
+    """
+
+    line = "".join(line.split())
+    if not line:
+        return tuple(), None
+
+    # split into LHS and RHS around '=' or '~'
+    lhs, rhs = re.split(r"[=~]", line)
+    if not lhs:
+        raise ValueError("Missing variable(s) on the left-hand side.")
+
+    # local registry (edit here when adding new distributions)
+    DIST_NAMES = ("Normal", "Uniform", "Exponential")
+
+    # ensure no more than one distribution name occurs
+    hits = [name for name in DIST_NAMES if name in rhs]
+    if len(hits) > 1:
+        raise ValueError("A line must not contain more than one distribution name.")
+    dist_name = hits[0] if hits else None
+
+    vars_tuple = tuple(v for v in lhs.split(",") if v)
+    if not vars_tuple:
+        raise ValueError("No variables found on the left-hand side.")
+
+    if dist_name:
+        rhs = rhs.replace(dist_name, "", 1)
+        if not (rhs.startswith("(") and rhs.endswith(")")):
+            raise ValueError(f"Expected '{dist_name}(...)'.")
+        args_str = rhs[1:-1]
+        args = parse_object_sequence_string(args_str)
+        dist_obj = (dist_name, args)
+
+    else:
+        if '{' in rhs:
+            mapping = parse_mapping_string(rhs)
+            if not mapping:
+                raise ValueError("Discrete distribution mapping must not be empty.")
+            dist_obj = ('Mapping', mapping)
+        
+        else:
+            dist_obj = ('Num', parse_number(rhs))
+
+    return vars_tuple, dist_obj
+
+
+def parse_prior(prior: str):
+    """Parse the prior section into a dict mapping vars_tuple to a distribution instance."""
+
+    prior_items = [x for x in re.split(r"[\n;]+", prior) if x.strip()]
+    prior_dict = {}
+
+    for item in prior_items:
+        vars_tuple, dist_obj = parse_prior_line(item)
+        
+        if vars_tuple:
+            
+            if vars_tuple in prior_dict:
+                raise ValueError(f"Duplicate prior for variables {vars_tuple}.")
+                
+            prior_dict[vars_tuple] = dist_obj
+
+    return prior_dict
