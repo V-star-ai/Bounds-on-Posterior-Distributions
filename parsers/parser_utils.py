@@ -1,7 +1,8 @@
 from fractions import Fraction
+from typing import Union, Optional
 
 
-def parse_number(s: str, forced_type: str | None = None) -> int | float | Fraction:
+def parse_number(s: str, forced_type: Optional[str] = None) -> Union[int, float, Fraction]:
     """Parse a numeric string into int / float / Fraction, optionally forced."""
     
     if forced_type is not None:
@@ -74,7 +75,7 @@ def split_top_level(s: str, sep: str = ",") -> list[str]:
     return parts
 
 
-def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None):
+def parse_object_sequence_string(s: str, type_map: Optional[dict[int, str]] = None):
     """
     Parse a top-level comma-separated string into Python objects.
 
@@ -88,17 +89,17 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
         type_map = {0: 'fraction'}
 
         Result:
-        [
+        (
             [[Fraction(6,5), Fraction(1,1), Fraction(2,1), Fraction(3,1)],
              [Fraction(17,5), Fraction(11,2), Fraction(1,1)]],
             (1, 2)
-        ]
+        )
     """
     
     s = "".join(s.split())
 
     if s == "":
-        return []
+        return tuple()
 
     parts = split_top_level(s)
     n = len(parts)
@@ -111,7 +112,7 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
             raise IndexError(f"type_map index {k} out of range for {n} top-level item(s)")
         norm_type_map[k] = v
 
-    def parse_obj(x: str, forced_type: str | None) -> list:
+    def parse_obj(x: str, forced_type = None):
         if not x:
             raise ValueError("Empty item encountered")
 
@@ -129,4 +130,4 @@ def parse_object_sequence_string(s: str, type_map: dict[int, str] | None = None)
 
         return parse_number(x, forced_type)
 
-    return [parse_obj(part, norm_type_map.get(i)) for i, part in enumerate(parts)]
+    return tuple(parse_obj(part, norm_type_map.get(i)) for i, part in enumerate(parts))
