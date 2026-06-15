@@ -55,6 +55,10 @@ def _default_decay_max(left, right, name: str):
     return max(left, right)
 
 
+def _default_le_constraint(left, right, name: str):
+    return left, "<=", right
+
+
 def _validate_decay(value, name: str) -> None:
     if _is_static_real(value) and not (0 <= value < 1):
         raise ValueError(f"{name} must satisfy 0 <= {name} < 1")
@@ -422,8 +426,68 @@ class BGD:
 
         return BGD(result_E, alpha, beta).standardize()
 
-    def __add__(self, other: BGD) -> BGD:
+    def __add__(self, other) -> BGD:
+        if not isinstance(other, BGD):
+            if self.ndim != 1:
+                raise ValueError("constant addition is only defined for one-dimensional BGD")
+            return self.add_constant(0, other)
         return self.add(other)
+
+    def __radd__(self, other) -> BGD:
+        return self.__add__(other)
+
+    def add_constant(self, dim: int, offset) -> BGD:
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+
+        result_E = self._copy_E()
+        center_index = (1,) * self.ndim
+        result_E[center_index] = result_E[center_index].shift(dim, offset)
+        return BGD(result_E, self.alpha, self.beta)
+
+    def shift(self, dim: int, offset) -> BGD:
+        return self.add_constant(dim, offset)
+
+    def le_constraints(self, other: BGD, *, constraint_factory=None) -> list:
+        if not isinstance(other, BGD):
+            raise TypeError("other must be a BGD")
+        if other.ndim != self.ndim:
+            raise ValueError(f"other.ndim must be {self.ndim}")
+        if constraint_factory is None:
+            constraint_factory = _default_le_constraint
+
+        left, right = self._align_pair_to_common_frame(other)
+        constraints = []
+
+        for dim in range(self.ndim):
+            constraints.append(
+                constraint_factory(left.alpha[dim], right.alpha[dim], f"alpha[{dim}]")
+            )
+            constraints.append(
+                constraint_factory(left.beta[dim], right.beta[dim], f"beta[{dim}]")
+            )
+
+        for index in iter_indices(left.E.shape):
+            left_mud = left.E[index]
+            right_mud = right.E[index]
+            target_S = tuple(
+                merge_breakpoints(
+                    left_mud.S[dim], right_mud.S[dim], preserve_dirac=True
+                )
+                for dim in range(self.ndim)
+            )
+            left_aligned = left_mud.align(target_S)
+            right_aligned = right_mud.align(target_S)
+            for cell_index in iter_indices(left_aligned.shape):
+                constraints.append(
+                    constraint_factory(
+                        left_aligned.P[cell_index],
+                        right_aligned.P[cell_index],
+                        f"E{index}.P{cell_index}",
+                    )
+                )
+
+        return constraints
 
     def independent_product(self, other: BGD) -> BGD:
         if not isinstance(other, BGD):
@@ -693,6 +757,28 @@ class BGD:
             return bound_factory(f"{prefix}_{name}", left, right)
 
         return wrapped
+
+    def _align_pair_to_common_frame(self, other: BGD) -> tuple[BGD, BGD]:
+        center_lefts = tuple(
+            min(self.center_lefts[dim], other.center_lefts[dim])
+            for dim in range(self.ndim)
+        )
+        center_rights = tuple(
+            max(self.center_rights[dim], other.center_rights[dim])
+            for dim in range(self.ndim)
+        )
+        left_lengths = tuple(
+            fraction_lcm(self.left_lengths[dim], other.left_lengths[dim])
+            for dim in range(self.ndim)
+        )
+        right_lengths = tuple(
+            fraction_lcm(self.right_lengths[dim], other.right_lengths[dim])
+            for dim in range(self.ndim)
+        )
+        return (
+            self.align_frame(center_lefts, center_rights, left_lengths, right_lengths),
+            other.align_frame(center_lefts, center_rights, left_lengths, right_lengths),
+        )
 
     def _tail_factor(self, direction: Direction):
         self._validate_direction(direction)

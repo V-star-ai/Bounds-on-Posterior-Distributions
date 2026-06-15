@@ -726,6 +726,11 @@ class GridMUD:
     def copy(self):
         return self._new(self.S, self.P.copy())
 
+    def shift(self, dim: int, offset):
+        if dim < 0 or dim >= self.ndim:
+            raise ValueError("dim out of range")
+        return _shift_grid_dim(self, dim, offset)
+
     def scale(self, factor):
         return self._new(self.S, self._scale_payload_array(self.P, factor))
 
@@ -751,7 +756,14 @@ class GridMUD:
         return self._new(target, result_P)
 
     def __add__(self, other):
+        if not isinstance(other, GridMUD):
+            if self.ndim != 1:
+                raise ValueError("constant addition is only defined for one-dimensional MUD")
+            return self.shift(0, other)
         return self.add(other)
+
+    def __radd__(self, other):
+        return self.__add__(other)
 
     def independent_product(self, other):
         self._validate_compatible_cell_type(other)

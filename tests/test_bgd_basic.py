@@ -273,6 +273,21 @@ class TestBGDBasic(unittest.TestCase):
         self.assertEqual(result.shape, (2, 2, 1))
         self.assertEqual(result.P.tolist(), [[[2], [5]], [[3], [7]]])
 
+    def test_mud_shift_moves_one_dimension_breakpoints(self):
+        mud = MUD([[0, 1], [10, 12]], [[5]])
+
+        result = mud.shift(1, Fraction(3, 2))
+
+        self.assertEqual(result.S, ((Fraction(0), Fraction(1)), (Fraction(23, 2), Fraction(27, 2))))
+        self.assertEqual(result.P.tolist(), [[5]])
+        self.assertEqual(result.mass(), mud.mass())
+
+    def test_one_dimensional_mud_add_constant_uses_shift(self):
+        result = MUD([[0, 1]], [5]) + Fraction(3, 2)
+
+        self.assertEqual(result.S, ((Fraction(3, 2), Fraction(5, 2)),))
+        self.assertEqual(result.P.tolist(), [5])
+
     def test_mud_allows_empty_dimension(self):
         mud = MUD([[1], [0, 2]], np.empty((0, 1), dtype=object))
 
@@ -939,6 +954,127 @@ class TestBGDBasic(unittest.TestCase):
         self.assertIsInstance(result.alpha[0], Symbol)
         self.assertEqual(result.alpha[0].expr, "max_alpha[0](a,1/2)")
         self.assertEqual(result.E[0].P.tolist(), [Fraction(5)])
+
+    def test_bgd_add_constant_shifts_center_only(self):
+        bgd = BGD(
+            [
+                MUD([[0, 2]], [5]),
+                MUD([[10, 12]], [7]),
+                MUD([[0, 3]], [11]),
+            ],
+            [Fraction(1, 2)],
+            [Fraction(1, 3)],
+        )
+
+        result = bgd.add_constant(0, Fraction(5, 2))
+
+        self.assertEqual(result.center_lefts, (Fraction(25, 2),))
+        self.assertEqual(result.center_rights, (Fraction(29, 2),))
+        self.assertEqual(result.E[1].S, ((Fraction(25, 2), Fraction(29, 2)),))
+        self.assertEqual(result.E[0].S, bgd.E[0].S)
+        self.assertEqual(result.E[2].S, bgd.E[2].S)
+        self.assertEqual(result.alpha, bgd.alpha)
+        self.assertEqual(result.beta, bgd.beta)
+        self.assertEqual(result.mass(), bgd.mass())
+        self.assertEqual(result.translation((0,)), (Fraction(25, 2),))
+        self.assertEqual(result.translation((-1,)), (Fraction(21, 2),))
+        self.assertEqual(result.translation((1,)), (Fraction(29, 2),))
+
+    def test_one_dimensional_bgd_add_constant_uses_shift(self):
+        result = make_1d_bgd(center_mass=3) + Fraction(3, 2)
+
+        self.assertEqual(result.center_lefts, (Fraction(3, 2),))
+        self.assertEqual(result.center_rights, (Fraction(5, 2),))
+        self.assertEqual(result.E[1].S, ((Fraction(3, 2), Fraction(5, 2)),))
+
+    def test_bgd_add_constant_multidimensional_single_axis(self):
+        bgd = BGD(make_e(), [0, 0], [0, 0])
+
+        result = bgd.add_constant(1, Fraction(3, 2))
+
+        self.assertEqual(result.center_lefts, (Fraction(0), Fraction(3, 2)))
+        self.assertEqual(result.center_rights, (Fraction(1), Fraction(5, 2)))
+        self.assertEqual(result.E[1, 1].S[0], bgd.E[1, 1].S[0])
+        self.assertEqual(result.E[1, 1].S[1], (Fraction(3, 2), Fraction(5, 2)))
+        self.assertEqual(result.E[0, 1].S, bgd.E[0, 1].S)
+
+    def test_bgd_add_constant_rejects_bad_inputs(self):
+        bgd = BGD(make_e(), [0, 0], [0, 0])
+
+        with self.assertRaisesRegex(ValueError, "dim out of range"):
+            bgd.add_constant(2, 1)
+        with self.assertRaisesRegex(ValueError, "one-dimensional BGD"):
+            bgd + 1
+
+    def test_bgd_le_constraints_default_triples(self):
+        left = make_1d_bgd(
+            left_mass=2,
+            center_mass=3,
+            right_mass=5,
+            alpha=Fraction(1, 3),
+            beta=Fraction(1, 4),
+        )
+        right = make_1d_bgd(
+            left_mass=7,
+            center_mass=11,
+            right_mass=13,
+            alpha=Fraction(1, 2),
+            beta=Fraction(1, 3),
+        )
+
+        constraints = left.le_constraints(right)
+
+        self.assertEqual(
+            constraints,
+            [
+                (Fraction(1, 3), "<=", Fraction(1, 2)),
+                (Fraction(1, 4), "<=", Fraction(1, 3)),
+                (Fraction(2), "<=", Fraction(7)),
+                (Fraction(3), "<=", Fraction(11)),
+                (Fraction(5), "<=", Fraction(13)),
+            ],
+        )
+
+    def test_bgd_le_constraints_uses_custom_factory_and_names(self):
+        left = make_1d_bgd(center_mass=2, alpha=Symbol("a"), beta=0)
+        right = make_1d_bgd(center_mass=3, alpha=Symbol("b"), beta=0)
+
+        def factory(first, second, name):
+            return f"{name}: {first} <= {second}"
+
+        constraints = left.le_constraints(right, constraint_factory=factory)
+
+        self.assertEqual(constraints[0], "alpha[0]: a <= b")
+        self.assertEqual(constraints[1], "beta[0]: 0 <= 0")
+        self.assertIn("E(1,).P(0,): 2 <= 3", constraints)
+
+    def test_bgd_le_constraints_aligns_common_frame_and_mud_grids(self):
+        left = make_1d_bgd(center_mass=10, alpha=0, beta=0)
+        right = BGD(
+            [
+                MUD([[0, 1]], [0]),
+                MUD([[Fraction(1, 2), 1]], [7]),
+                MUD([[0, 1]], [0]),
+            ],
+            [0],
+            [0],
+        )
+
+        def factory(first, second, name):
+            return name, first, second
+
+        constraints = left.le_constraints(right, constraint_factory=factory)
+
+        self.assertIn(("E(1,).P(0,)", Fraction(5), 0), constraints)
+        self.assertIn(("E(1,).P(1,)", Fraction(5), Fraction(7)), constraints)
+
+    def test_bgd_le_constraints_rejects_bad_inputs(self):
+        bgd = make_1d_bgd()
+
+        with self.assertRaisesRegex(TypeError, "other must be a BGD"):
+            bgd.le_constraints(MUD([[0, 1]], [1]))
+        with self.assertRaisesRegex(ValueError, "other.ndim"):
+            bgd.le_constraints(BGD(make_e(), [0, 0], [0, 0]))
 
     def test_bgd_convolve_uniform_center_only_updates_center_frame(self):
         bgd = make_1d_bgd(center_mass=1, alpha=0, beta=0)
