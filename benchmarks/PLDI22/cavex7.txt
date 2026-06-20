@@ -1,0 +1,32 @@
+prior:
+x := 0;
+count := 0;
+u ~ Uniform(0,1)
+
+program:
+while(x < 5) {
+    count := count + 1;
+    u := Uniform(0,1);
+
+    if(x = 0) {
+        if(u > 0.0) { x := x + 1 } else { skip }
+    } else {
+        if(x = 1) {
+            if(u > 0.2) { x := x + 1 } else { skip }
+        } else {
+            if(x = 2) {
+                if(u > 0.4) { x := x + 1 } else { skip }
+            } else {
+                if(x = 3) {
+                    if(u > 0.6) { x := x + 1 } else { skip }
+                } else {
+                    if(x = 4) {
+                        if(u > 0.8) { x := x + 1 } else { skip }
+                    } else {
+                        skip
+                    }
+                }
+            }
+        }
+    }
+}

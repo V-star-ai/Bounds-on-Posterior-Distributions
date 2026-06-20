@@ -1,0 +1,13 @@
+prior:
+y := 0;
+x := 0;
+
+program:
+while((y < 2) || (y > 2)) {
+  if(0.5) {
+    x := x + Uniform(0, 0.5);
+    y := y + 1
+  } else {
+    x := x + Uniform(0.5, 1)
+  }
+}

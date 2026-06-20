@@ -1,0 +1,9 @@
+prior:
+i := 0;
+x := 0;
+
+program:
+while(x < 1) {
+    x := x + Uniform(0,1);
+    i := i + 1
+}

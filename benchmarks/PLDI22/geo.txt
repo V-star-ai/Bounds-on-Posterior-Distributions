@@ -1,0 +1,9 @@
+prior:
+x := 0;
+u ~ Uniform(0,1);
+
+program:
+while(u > 0.5) {
+    x := x + 1;
+    u := Uniform(0,1)
+}

@@ -1,0 +1,15 @@
+prior:
+p_x := 0;
+p_y := 0;
+
+program:
+while(p_y <= 1){
+  if(0.5){
+    p_y := p_y + 1;
+    p_x := p_x + Uniform(0, 0.5)
+  }else{
+    p_x := p_x + Uniform(0.5, 1)
+  }
+};
+
+observe(p_x > 15

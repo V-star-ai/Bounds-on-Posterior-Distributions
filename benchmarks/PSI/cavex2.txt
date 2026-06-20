@@ -1,0 +1,12 @@
+prior:
+z := -10;
+
+program:
+while(z <= 0) {
+    if(0.5) {
+        z := z - 1;
+        z := z + Uniform(0,10)
+    } else {
+        z := z - 1
+    }
+}
