@@ -226,7 +226,12 @@ def _eval_bgd_at(bgd: BGD, x: Sequence[float], *, value: str) -> float:
         block_coord.append(coord)
 
     block = bgd.block_at(tuple(block_coord))
-    local_x = tuple(point[axis] - block.translation[axis] for axis in range(bgd.ndim))
+    if all(coord == 0 for coord in block_coord):
+        local_x = point
+    else:
+        local_x = tuple(
+            point[axis] - block.translation[axis] for axis in range(bgd.ndim)
+        )
     base = _eval_mud_at(block.distribution, local_x, value=value)
     return base * _to_float(block.decay_factor, "BGD decay factor")
 
