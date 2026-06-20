@@ -292,11 +292,19 @@ class BGD:
                 continue
 
             direction = self.index_to_direction(index)
+            base_piece = self.E[index].copy()
             per_dim_options = []
             for dim, value in enumerate(direction):
                 if value < 0:
                     multiplier = left_multipliers[dim]
                     length = self.left_lengths[dim]
+                    if length == 0:
+                        if target_lefts[dim] != 0:
+                            base_piece = _align_mud_dim_to_extent(
+                                base_piece, dim, Fraction(0), target_lefts[dim]
+                            )
+                        per_dim_options.append([(dim, Fraction(0), 0)])
+                        continue
                     per_dim_options.append(
                         [
                             (dim, offset * length, multiplier - offset - 1)
@@ -306,6 +314,13 @@ class BGD:
                 elif value > 0:
                     multiplier = right_multipliers[dim]
                     length = self.right_lengths[dim]
+                    if length == 0:
+                        if target_rights[dim] != 0:
+                            base_piece = _align_mud_dim_to_extent(
+                                base_piece, dim, Fraction(0), target_rights[dim]
+                            )
+                        per_dim_options.append([(dim, Fraction(0), 0)])
+                        continue
                     per_dim_options.append(
                         [
                             (dim, offset * length, offset)
@@ -317,7 +332,7 @@ class BGD:
 
             pieces = []
             for option_tuple in product(*per_dim_options):
-                piece = self.E[index].copy()
+                piece = base_piece.copy()
                 factors = []
                 for dim, offset, exponent in option_tuple:
                     if offset != 0:
@@ -333,11 +348,15 @@ class BGD:
                 expanded[index] = expanded[index] + piece
 
         alpha = tuple(
-            _object_power(self.alpha[dim], left_multipliers[dim])
+            self.alpha[dim]
+            if self.left_lengths[dim] == 0
+            else _object_power(self.alpha[dim], left_multipliers[dim])
             for dim in range(self.ndim)
         )
         beta = tuple(
-            _object_power(self.beta[dim], right_multipliers[dim])
+            self.beta[dim]
+            if self.right_lengths[dim] == 0
+            else _object_power(self.beta[dim], right_multipliers[dim])
             for dim in range(self.ndim)
         )
         return BGD(expanded, alpha, beta).standardize()
@@ -396,11 +415,15 @@ class BGD:
             for dim in range(self.ndim)
         )
         left_lengths = tuple(
-            fraction_lcm(self.left_lengths[dim], other.left_lengths[dim])
+            self._common_period_length(
+                self.left_lengths[dim], other.left_lengths[dim]
+            )
             for dim in range(self.ndim)
         )
         right_lengths = tuple(
-            fraction_lcm(self.right_lengths[dim], other.right_lengths[dim])
+            self._common_period_length(
+                self.right_lengths[dim], other.right_lengths[dim]
+            )
             for dim in range(self.ndim)
         )
 
@@ -768,11 +791,15 @@ class BGD:
             for dim in range(self.ndim)
         )
         left_lengths = tuple(
-            fraction_lcm(self.left_lengths[dim], other.left_lengths[dim])
+            self._common_period_length(
+                self.left_lengths[dim], other.left_lengths[dim]
+            )
             for dim in range(self.ndim)
         )
         right_lengths = tuple(
-            fraction_lcm(self.right_lengths[dim], other.right_lengths[dim])
+            self._common_period_length(
+                self.right_lengths[dim], other.right_lengths[dim]
+            )
             for dim in range(self.ndim)
         )
         return (
@@ -797,6 +824,17 @@ class BGD:
         return result
 
     def _align_center_left(self, dim: int, left: Fraction) -> BGD:
+        if self.left_lengths[dim] == 0:
+            result = self._force_frame_dim(
+                self._copy_E(),
+                dim,
+                left,
+                self.center_rights[dim],
+                self.left_lengths[dim],
+                self.right_lengths[dim],
+            )
+            return BGD(result, self.alpha, self.beta)
+
         center_side = self._restrict_with_left_prefix(dim, ">=", left)
         tail_side = self._restrict_with_left_phase(dim, "<", left)
 
@@ -819,6 +857,17 @@ class BGD:
         return BGD(result, self.alpha, self.beta)
 
     def _align_center_right(self, dim: int, right: Fraction) -> BGD:
+        if self.right_lengths[dim] == 0:
+            result = self._force_frame_dim(
+                self._copy_E(),
+                dim,
+                self.center_lefts[dim],
+                right,
+                self.left_lengths[dim],
+                self.right_lengths[dim],
+            )
+            return BGD(result, self.alpha, self.beta)
+
         center_side = self._restrict_with_right_prefix(dim, "<=", right)
         tail_side = self._restrict_with_right_phase(dim, ">", right)
 
@@ -840,6 +889,32 @@ class BGD:
         )
         return BGD(result, self.alpha, self.beta)
 
+    def _force_inferred_frame_dims(
+        self, E: np.ndarray, *, preserve_empty: bool = False
+    ) -> np.ndarray:
+        result = E
+        center = result[(1,) * self.ndim]
+        for dim in range(self.ndim):
+            center_left = center.S[dim][0]
+            center_right = center.S[dim][-1]
+            result = self._force_frame_dim(
+                result,
+                dim,
+                center_left,
+                center_right,
+                self._infer_edge_length(result, dim, -1),
+                self._infer_edge_length(result, dim, 1),
+                preserve_empty=preserve_empty,
+            )
+        return result
+
+    def _infer_edge_length(self, E: np.ndarray, dim: int, side: int) -> Fraction:
+        for index in iter_indices(E.shape):
+            direction = self.index_to_direction(index)
+            if direction[dim] == side:
+                return E[index].S[dim][-1]
+        raise ValueError("edge length could not be inferred")
+
     def _force_frame_dim(
         self,
         E: np.ndarray,
@@ -848,6 +923,8 @@ class BGD:
         center_right: Fraction,
         left_length: Fraction,
         right_length: Fraction,
+        *,
+        preserve_empty: bool = False,
     ) -> np.ndarray:
         result = np.empty(E.shape, dtype=object)
         center_index = (1,) * self.ndim
@@ -863,7 +940,10 @@ class BGD:
                 left, right = center_left, center_right
             else:
                 left, right = Fraction(0), center_length
-            result[index] = _align_mud_dim_to_extent(E[index], dim, left, right)
+            if preserve_empty and E[index].is_empty:
+                result[index] = E[index]
+            else:
+                result[index] = _align_mud_dim_to_extent(E[index], dim, left, right)
 
         return result
 
@@ -906,14 +986,28 @@ class BGD:
 
     @staticmethod
     def _integer_period_multiple(target: Fraction, current: Fraction, name: str) -> int:
-        if current <= 0:
-            raise ValueError("current edge period length must be positive")
-        if target <= 0:
-            raise ValueError(f"{name} must be positive")
+        if current < 0:
+            raise ValueError("current edge period length must be nonnegative")
+        if target < 0:
+            raise ValueError(f"{name} must be nonnegative")
+        if current == 0:
+            return 0
+        if target == 0:
+            raise ValueError(f"{name} cannot be zero when current length is positive")
         ratio = target / current
         if ratio.denominator != 1 or ratio.numerator < 1:
             raise ValueError(f"{name} must be an integer multiple of the current length")
         return ratio.numerator
+
+    @staticmethod
+    def _common_period_length(left: Fraction, right: Fraction) -> Fraction:
+        if left < 0 or right < 0:
+            raise ValueError("edge period lengths must be nonnegative")
+        if left == 0:
+            return right
+        if right == 0:
+            return left
+        return fraction_lcm(left, right)
 
     def _restrict_greater(self, dim: int, op: str, threshold: Fraction) -> np.ndarray:
         left = self.center_lefts[dim]
@@ -938,14 +1032,15 @@ class BGD:
     ) -> np.ndarray:
         result = np.empty(self.E.shape, dtype=object)
         old_left = self.center_lefts[dim]
+        old_right = self.center_rights[dim]
         local_threshold = threshold - old_left
 
         for index in iter_indices(self.E.shape):
             direction = self.index_to_direction(index)
-            is_center_direction = direction[dim] == 0
             is_true_center = index == (1,) * self.ndim
 
             if keep_right:
+                center_length = old_right - threshold
                 if direction[dim] < 0:
                     result[index] = self._empty_for_index(index, dim, threshold)
                 elif direction[dim] > 0:
@@ -953,12 +1048,18 @@ class BGD:
                 elif is_true_center:
                     result[index] = self.E[index].restrict(dim, op, threshold)
                 else:
-                    result[index] = _shift_mud_dim(
-                        self.E[index].restrict(dim, op, local_threshold),
+                    result[index] = _align_mud_dim_to_extent(
+                        _shift_mud_dim(
+                            self.E[index].restrict(dim, op, local_threshold),
+                            dim,
+                            old_left - threshold,
+                        ),
                         dim,
-                        old_left - threshold,
+                        Fraction(0),
+                        center_length,
                     )
             else:
+                center_length = threshold - old_left
                 if direction[dim] < 0:
                     result[index] = self.E[index].copy()
                 elif direction[dim] > 0:
@@ -966,7 +1067,12 @@ class BGD:
                 elif is_true_center:
                     result[index] = self.E[index].restrict(dim, op, threshold)
                 else:
-                    result[index] = self.E[index].restrict(dim, op, local_threshold)
+                    result[index] = _align_mud_dim_to_extent(
+                        self.E[index].restrict(dim, op, local_threshold),
+                        dim,
+                        Fraction(0),
+                        center_length,
+                    )
 
         return result
 
@@ -995,7 +1101,9 @@ class BGD:
                     continue
                 piece = piece.scale(self.alpha[dim] ** (block_number - 1))
                 shift = block_start if is_true_center else block_start - threshold
-                center = center + _shift_mud_dim(piece, dim, shift)
+                piece = _shift_mud_dim(piece, dim, shift)
+                piece = self._convert_piece_to_target_coords(piece, dim, center_index)
+                center = center + piece
 
             result[left_index] = self._empty_for_index(left_index, dim, threshold)
             result[center_index] = center
@@ -1025,7 +1133,9 @@ class BGD:
                     continue
                 piece = piece.scale(self.beta[dim] ** block_number)
                 shift = block_start if is_true_center else block_start - self.center_lefts[dim]
-                center = center + _shift_mud_dim(piece, dim, shift)
+                piece = _shift_mud_dim(piece, dim, shift)
+                piece = self._convert_piece_to_target_coords(piece, dim, center_index)
+                center = center + piece
 
             result[left_index] = self.E[left_index].copy()
             result[center_index] = center
@@ -1133,8 +1243,8 @@ class BGD:
             else Fraction(0)
         )
 
-        E[target_index] = E[target_index] + _move_slice_to_point(
-            boundary, dim, target_point
+        E[target_index] = E[target_index] + self._move_boundary_slice_to_index(
+            boundary, dim, target_point, target_index
         )
         E[index] = E[index] + _move_slice_to_point(boundary, dim, 0).scale(
             self.alpha[dim]
@@ -1158,12 +1268,37 @@ class BGD:
             else self.center_lengths[dim]
         )
 
-        E[target_index] = E[target_index] + _move_slice_to_point(
-            boundary, dim, target_point
+        E[target_index] = E[target_index] + self._move_boundary_slice_to_index(
+            boundary, dim, target_point, target_index
         )
         E[index] = E[index] + _move_slice_to_point(
             boundary, dim, self.right_lengths[dim]
         ).scale(self.beta[dim])
+
+    def _move_boundary_slice_to_index(
+        self, boundary: MUD, moved_dim: int, moved_point, target_index: Index
+    ) -> MUD:
+        moved = _move_slice_to_point(boundary, moved_dim, moved_point)
+        return self._convert_piece_to_target_coords(moved, moved_dim, target_index)
+
+    def _convert_piece_to_target_coords(
+        self, moved: MUD, moved_dim: int, target_index: Index
+    ) -> MUD:
+        target_direction = self.index_to_direction(target_index)
+
+        for dim, direction in enumerate(target_direction):
+            if dim == moved_dim:
+                continue
+            if direction == 0 and target_index == (1,) * self.ndim:
+                offset = self.center_lefts[dim]
+            else:
+                offset = Fraction(0)
+
+            current_left = moved.S[dim][0]
+            if current_left != offset:
+                moved = _shift_mud_dim(moved, dim, offset - current_left)
+
+        return moved
 
     @classmethod
     def _normalize_E(cls, E) -> np.ndarray:
@@ -1234,9 +1369,11 @@ class BGD:
 
                 endpoint = breakpoints[-1]
                 if direction[dim] == 0:
-                    if endpoint != center_lengths[dim]:
+                    if mud.is_empty or BGD._is_degenerate_edge_block(mud, direction):
+                        continue
+                    if endpoint > center_lengths[dim]:
                         raise ValueError(
-                            f"E{index}.S[{dim}][-1] must equal center length "
+                            f"E{index}.S[{dim}][-1] must not exceed center length "
                             f"{center_lengths[dim]}"
                         )
                 elif direction[dim] == -1:
@@ -1264,4 +1401,11 @@ class BGD:
         return (
             tuple(length for length in left_lengths if length is not None),
             tuple(length for length in right_lengths if length is not None),
+        )
+
+    @staticmethod
+    def _is_degenerate_edge_block(mud: MUD, direction: Direction) -> bool:
+        return any(
+            value != 0 and mud.S[dim][-1] == mud.S[dim][0]
+            for dim, value in enumerate(direction)
         )

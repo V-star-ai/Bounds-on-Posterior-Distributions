@@ -15,6 +15,7 @@ class Z3Adapter(Adapter):
         return x
 
     def solve(self, vars, constraints):
+        print(f"[Z3Adapter] variables={len(vars)}, constraints={len(constraints)}")
         solver = z3.Solver()
         solver.add(*constraints)
         if solver.check() != z3.sat:

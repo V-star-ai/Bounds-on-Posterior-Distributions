@@ -1,0 +1,13 @@
+{
+  "normal": {
+    "center_subdivision": [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5],
+    "block_subdivision": [0.0, 0.5, 1.0]
+  },
+  "visualization": {
+    "num": 160,
+    "mode": "surface",
+    "value": "density",
+    "fallback_html": "bgd_visualization.html",
+    "show": true
+  }
+}

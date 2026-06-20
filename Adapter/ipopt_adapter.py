@@ -111,6 +111,10 @@ class IpoptAdapter(Adapter):
             raise TypeError(c)
 
         m = len(constraint_specs)
+        print(
+            f"[IpoptAdapter] variables={n}, constraints={m}, "
+            f"raw_constraints={len(constraints)}"
+        )
 
         # Variable bounds (use wide bounds; tighten for alpha/beta for stability)
         lb = np.full(n, -1e20, dtype=float)
@@ -214,17 +218,10 @@ class IpoptAdapter(Adapter):
 
         return {name: float(x[idx]) for name, idx in var_index.items()}
 
-    def solve_expr(self, eed_expr, envs):
+    def solve_bgd_expr(self, bgd_expr, envs):
         # Override to bypass walk_constraint and use raw Expr constraints.
         solved_vars = self.solve(envs.vars, envs.constraints_list)
-
-        def expr_to_float(expr):
-            return self.eval_expr(expr, solved_vars)
-
-        P_val = np.vectorize(expr_to_float, otypes=[float])(eed_expr.P)
-        alpha_val = [expr_to_float(a) for a in eed_expr.alpha]
-        beta_val = [expr_to_float(b) for b in eed_expr.beta]
-        return type(eed_expr)(eed_expr.S, P_val, alpha_val, beta_val, eed_expr.discrete_mask)
+        return self._eval_bgd_expr_with_vars(bgd_expr, solved_vars)
 
     def var_max(self, a, b):
         # Not used in IpoptAdapter path (constraints evaluated from Expr directly).

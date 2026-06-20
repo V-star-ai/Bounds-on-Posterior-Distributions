@@ -1,7 +1,3 @@
-from distributions.eed import EED
-from distributions.normal import Normal
-from distributions.uniform import Uniform
-from distributions.exponential import Exponential
 from distributions.bgd import BGD
 from distributions.mud import (
     AffineCell,
@@ -16,10 +12,6 @@ from distributions.mud import (
 )
 
 __all__ = [
-    "EED",
-    "Normal",
-    "Uniform",
-    "Exponential",
     "AffineCell",
     "AffineCellOps",
     "AffineMUD",

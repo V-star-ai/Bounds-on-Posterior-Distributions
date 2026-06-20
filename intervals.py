@@ -1,7 +1,7 @@
 from fractions import Fraction
 from typing import List, Tuple, Optional
 
-Interval = Tuple[Optional[int], Optional[int]]
+Interval = Tuple[Optional[Fraction], Optional[Fraction]]
 
 
 def const_int_value(expr):
@@ -60,8 +60,8 @@ def interval_intersect(a: List[Interval], b: List[Interval]) -> List[Interval]:
             hi = min(hi_val(hi1), hi_val(hi2))
             if lo >= hi:
                 continue
-            out_lo = None if lo == -float("inf") else int(lo)
-            out_hi = None if hi == float("inf") else int(hi)
+            out_lo = None if lo == -float("inf") else lo
+            out_hi = None if hi == float("inf") else hi
             res.append((out_lo, out_hi))
     return interval_union(res, [])
 
