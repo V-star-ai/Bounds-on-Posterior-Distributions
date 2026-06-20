@@ -14,7 +14,7 @@ class Z3Adapter(Adapter):
             return float(x)
         return x
 
-    def solve(self, vars, constraints):
+    def solve(self, vars, constraints, objective=None):
         print(f"[Z3Adapter] variables={len(vars)}, constraints={len(constraints)}")
         solver = z3.Solver()
         solver.add(*constraints)

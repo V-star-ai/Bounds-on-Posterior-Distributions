@@ -18,6 +18,7 @@ from Adapter.expr import (
     Max,
     Constraint,
     CompareOp,
+    ensure_expr,
 )
 
 
@@ -87,7 +88,7 @@ class IpoptAdapter(Adapter):
             )
         raise TypeError(expr)
 
-    def solve(self, vars, constraints):
+    def solve(self, vars, constraints, objective=None):
         try:
             import cyipopt  # type: ignore
         except Exception as exc:
@@ -96,6 +97,8 @@ class IpoptAdapter(Adapter):
         var_names = list(vars.keys())
         var_index = {name: i for i, name in enumerate(var_names)}
         n = len(var_names)
+        has_objective = objective is not None
+        objective_expr = ensure_expr(0 if objective is None else objective)
 
         constraint_specs: List[_ConstraintSpec] = []
         for c in constraints:
@@ -113,7 +116,8 @@ class IpoptAdapter(Adapter):
         m = len(constraint_specs)
         print(
             f"[IpoptAdapter] variables={n}, constraints={m}, "
-            f"raw_constraints={len(constraints)}"
+            f"raw_constraints={len(constraints)}, "
+            f"objective={'provided' if has_objective else 'zero'}"
         )
 
         # Variable bounds (use wide bounds; tighten for alpha/beta for stability)
@@ -152,6 +156,21 @@ class IpoptAdapter(Adapter):
                 vals[i] = left_val - right_val
             return vals
 
+        def _objective(x):
+            return self._eval_expr(objective_expr, x, var_index)
+
+        def _objective_gradient(x):
+            grad = np.zeros(n, dtype=float)
+            if n == 0:
+                return grad
+            base = _objective(x)
+            step = self.fd_eps
+            for j in range(n):
+                x2 = np.array(x, copy=True)
+                x2[j] += step
+                grad[j] = (_objective(x2) - base) / step
+            return grad
+
         def _jacobian(x):
             if m == 0:
                 return np.zeros(0, dtype=float)
@@ -166,10 +185,10 @@ class IpoptAdapter(Adapter):
 
         class _Problem:
             def objective(self, x):
-                return 0.0
+                return _objective(x)
 
             def gradient(self, x):
-                return np.zeros(n, dtype=float)
+                return _objective_gradient(x)
 
             def constraints(self, x):
                 return _constraints(x)
@@ -216,11 +235,18 @@ class IpoptAdapter(Adapter):
         if status not in (0, 1):
             raise RuntimeError(f"Ipopt failed to solve (status={status}, info={info})")
 
-        return {name: float(x[idx]) for name, idx in var_index.items()}
+        result = {name: float(x[idx]) for name, idx in var_index.items()}
+        if has_objective:
+            print(f"[IpoptAdapter] objective_value={_objective(x)}")
+        return result
 
     def solve_bgd_expr(self, bgd_expr, envs):
         # Override to bypass walk_constraint and use raw Expr constraints.
-        solved_vars = self.solve(envs.vars, envs.constraints_list)
+        solved_vars = self.solve(
+            envs.vars,
+            envs.constraints_list,
+            objective=bgd_expr.mass(),
+        )
         return self._eval_bgd_expr_with_vars(bgd_expr, solved_vars)
 
     def var_max(self, a, b):

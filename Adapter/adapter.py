@@ -131,7 +131,7 @@ class Adapter(ABC):
         raise TypeError(expr)
 
     @abstractmethod
-    def solve(self, vars, constraints):
+    def solve(self, vars, constraints, objective=None):
         raise NotImplementedError
 
     def _fresh_bgd_template(self, template: BGD, name_prefix: str, envs: AdapterEnvs) -> BGD:
