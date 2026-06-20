@@ -52,8 +52,8 @@ def parse_prior_line(line: str) -> tuple[tuple[str, ...], tuple]:
     if not line:
         return tuple(), None
 
-    # split into LHS and RHS around '=' or '~'
-    lhs, rhs = re.split(r"[=~]", line)
+    # split into LHS and RHS around ':=', '=' or '~'
+    lhs, rhs = re.split(r":=|=|~", line, maxsplit=1)
     if not lhs:
         raise ValueError("Missing variable(s) on the left-hand side.")
 

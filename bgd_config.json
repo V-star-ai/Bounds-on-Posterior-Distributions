@@ -9,5 +9,19 @@
     "value": "density",
     "fallback_html": "bgd_visualization.html",
     "show": true
+  },
+  "template": {
+    "dirac_iterations": 2
+  },
+  "solver": {
+    "name": "ipopt",
+    "ipopt": {
+      "max_iter": 500,
+      "tol": 1e-6,
+      "constraint_eps": 1e-8,
+      "smooth_max_eps": 0.0,
+      "fd_eps": 1e-6,
+      "print_level": 0
+    }
   }
 }

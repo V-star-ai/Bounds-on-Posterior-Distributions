@@ -157,20 +157,31 @@ class Adapter(ABC):
         return BGD(E_expr, alpha, beta)
 
     def _print_bgd_template_shape_summary(self, template: BGD, name_prefix: str) -> None:
+        def format_breakpoints(points):
+            return "(" + ", ".join(str(point) for point in points) + ")"
+
         total_cells = 0
-        print(f"[BGD template {name_prefix}] E tensor shape={template.E.shape}")
+        print(f"[BGD template {name_prefix}] E tensor shape={template.E.shape}", flush=True)
         for edge_index in np.ndindex(template.E.shape):
             mud = template.E[edge_index]
             cell_count = int(np.prod(mud.shape, dtype=int)) if mud.shape else 1
             total_cells += cell_count
             shape_expr = " * ".join(str(size) for size in mud.shape) or "1"
-            print(f"  E{edge_index} | {shape_expr} = {cell_count}")
+            print(f"  E{edge_index} | {shape_expr} = {cell_count}", flush=True)
+            if edge_index and edge_index[0] == 1:
+                interval_counts = tuple(len(axis) - 1 for axis in mud.S)
+                breakpoints = tuple(format_breakpoints(axis) for axis in mud.S)
+                print(
+                    f"    interval_counts={interval_counts}, S={breakpoints}",
+                    flush=True,
+                )
 
         decay_vars = 2 * template.ndim
         print(
             f"[BGD template {name_prefix}] "
             f"P_variables={total_cells}, decay_variables={decay_vars}, "
-            f"template_variables={total_cells + decay_vars}"
+            f"template_variables={total_cells + decay_vars}",
+            flush=True,
         )
 
     def _bgd_nonnegative_constraints(self, bgd_expr: BGD) -> list:

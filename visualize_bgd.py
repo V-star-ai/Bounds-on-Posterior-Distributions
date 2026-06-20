@@ -75,6 +75,51 @@ def _auto_num(span: float, *, min_n: int, max_n: int, scale: float) -> int:
     return int(max(min_n, min(max_n, span * scale)))
 
 
+def _axis_structural_points(
+    bgd: BGD,
+    axis: int,
+    *,
+    tail_blocks: int,
+    xmin: Fraction,
+    xmax: Fraction,
+):
+    points = set()
+    for edge_index in np.ndindex(bgd.E.shape):
+        mud = bgd.E[edge_index]
+        direction = bgd.index_to_direction(edge_index)
+        local_points = mud.S[axis]
+
+        if direction[axis] < 0:
+            length = bgd.left_lengths[axis]
+            if length <= 0:
+                continue
+            translations = [
+                bgd.center_lefts[axis] - block_number * length
+                for block_number in range(1, tail_blocks + 1)
+            ]
+        elif direction[axis] > 0:
+            length = bgd.right_lengths[axis]
+            if length <= 0:
+                continue
+            translations = [
+                bgd.center_rights[axis] + (block_number - 1) * length
+                for block_number in range(1, tail_blocks + 1)
+            ]
+        else:
+            if edge_index == (1,) * bgd.ndim:
+                translations = [Fraction(0)]
+            else:
+                translations = [bgd.center_lefts[axis]]
+
+        for translation in translations:
+            for point in local_points:
+                global_point = translation + point
+                if xmin <= global_point <= xmax:
+                    points.add(global_point)
+
+    return sorted(points)
+
+
 def _axis_points_for_bgd(
     bgd: BGD,
     axis: int,
@@ -93,7 +138,18 @@ def _axis_points_for_bgd(
             xmax += 1
         span = _to_float(xmax - xmin, f"axis {axis} span")
         num = _auto_num(span, min_n=default_num, max_n=max(default_num, 600), scale=40.0)
-        return np.linspace(float(xmin), float(xmax), num)
+        base_points = np.linspace(float(xmin), float(xmax), num)
+        structural_points = _axis_structural_points(
+            bgd,
+            axis,
+            tail_blocks=tail_blocks,
+            xmin=xmin,
+            xmax=xmax,
+        )
+        return np.array(
+            sorted(set(base_points.tolist()) | {float(point) for point in structural_points}),
+            dtype=float,
+        )
 
     value = spec_value if isinstance(spec_value, dict) else {}
     xmin = value.get(
@@ -107,7 +163,20 @@ def _axis_points_for_bgd(
     num = int(value.get("num", default_num))
     if num <= 0:
         raise ValueError("var axis num must be positive")
-    return np.linspace(float(xmin), float(xmax), num)
+    xmin = _to_fraction(xmin)
+    xmax = _to_fraction(xmax)
+    base_points = np.linspace(float(xmin), float(xmax), num)
+    structural_points = _axis_structural_points(
+        bgd,
+        axis,
+        tail_blocks=tail_blocks,
+        xmin=xmin,
+        xmax=xmax,
+    )
+    return np.array(
+        sorted(set(base_points.tolist()) | {float(point) for point in structural_points}),
+        dtype=float,
+    )
 
 
 def _enum_points_for_axis(bgd: BGD, axis: int, spec_value: Any):
@@ -355,8 +424,16 @@ def plot_bgd(
                 if any(value is None for value in x):
                     raise ValueError("non-variable dimensions must be const or enum")
                 ys.append(_eval_bgd_at(bgd, x, value=value))
+            nonzero_count = sum(1 for yv in ys if yv != 0)
+            max_value = max(ys) if ys else 0.0
+            print(
+                f"[BGD visualization] samples={len(ys)}, "
+                f"nonzero={nonzero_count}, max={max_value}",
+                flush=True,
+            )
             label = ", ".join(label for (label, _value) in combo) if combo else None
-            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name=label))
+            trace_mode = "lines+markers" if len(xs) <= 2 else "lines"
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode=trace_mode, name=label))
         if show_blocks:
             _add_1d_boundaries(fig, bgd, axis, tail_blocks=tail_blocks)
         fig.update_layout(
@@ -384,6 +461,7 @@ def plot_bgd(
         default_num=130,
     )
     X, Y = np.meshgrid(xs, ys)
+    degenerate_grid = len(xs) < 2 or len(ys) < 2
     titles = [
         ", ".join(label for (label, _value) in combo) if combo else "BGD"
         for combo in enum_combos
@@ -399,15 +477,54 @@ def plot_bgd(
                 if any(value is None for value in x):
                     raise ValueError("non-variable dimensions must be const or enum")
                 Z[row, col] = _eval_bgd_at(bgd, x, value=value)
+        print(
+            f"[BGD visualization] grid={len(xs)}x{len(ys)}, samples={Z.size}, "
+            f"nonzero={int(np.count_nonzero(Z))}, max={float(np.max(Z)) if Z.size else 0.0}",
+            flush=True,
+        )
 
         trace_visible = combo_index == 0
-        if mode == "surface":
+        if mode == "surface" and degenerate_grid:
+            fig.add_trace(
+                go.Scatter3d(
+                    x=X.reshape(-1),
+                    y=Y.reshape(-1),
+                    z=Z.reshape(-1),
+                    mode="lines+markers",
+                    marker=dict(
+                        size=4,
+                        color=Z.reshape(-1),
+                        colorscale="Viridis",
+                        colorbar=dict(title=value),
+                    ),
+                    line=dict(width=5, color="rgba(30,90,180,0.75)"),
+                    visible=trace_visible,
+                    name=titles[combo_index],
+                )
+            )
+        elif mode == "surface":
             fig.add_trace(
                 go.Surface(
                     x=xs,
                     y=ys,
                     z=Z,
                     colorbar=dict(title=value),
+                    visible=trace_visible,
+                    name=titles[combo_index],
+                )
+            )
+        elif degenerate_grid:
+            fig.add_trace(
+                go.Scatter(
+                    x=X.reshape(-1),
+                    y=Y.reshape(-1),
+                    mode="markers",
+                    marker=dict(
+                        size=8,
+                        color=Z.reshape(-1),
+                        colorscale="Viridis",
+                        colorbar=dict(title=value),
+                    ),
                     visible=trace_visible,
                     name=titles[combo_index],
                 )

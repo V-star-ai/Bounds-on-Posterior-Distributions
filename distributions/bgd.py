@@ -617,8 +617,6 @@ class BGD:
         noise_right = _as_fraction(high)
         if noise_left >= noise_right:
             raise ValueError("requires low < high")
-        if self.left_lengths[dim] <= 0 or self.right_lengths[dim] <= 0:
-            raise ValueError("edge period lengths must be positive")
 
         result_E = np.empty(self.E.shape, dtype=object)
         constraints = []
@@ -705,6 +703,8 @@ class BGD:
         target_S = list(self.E[index].S)
         if index == (1,) * self.ndim:
             target_S[dim] = (target_left, target_right)
+        elif target_left == target_right:
+            target_S[dim] = (Fraction(0),)
         else:
             target_S[dim] = (Fraction(0), target_right - target_left)
         return tuple(target_S)
@@ -735,7 +735,7 @@ class BGD:
         target_left: Fraction,
         target_right: Fraction,
     ) -> Iterable[int]:
-        if target_axis in (0, 1):
+        if target_axis in (0, 1) and self.left_lengths[dim] > 0:
             block = -1
             while True:
                 source_left, source_right = self._block_interval_for_dim(dim, block)
@@ -748,7 +748,7 @@ class BGD:
         if target_axis == 1:
             yield 0
 
-        if target_axis in (1, 2):
+        if target_axis in (1, 2) and self.right_lengths[dim] > 0:
             block = 1
             while True:
                 source_left, source_right = self._block_interval_for_dim(dim, block)

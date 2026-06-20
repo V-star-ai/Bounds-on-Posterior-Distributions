@@ -2,6 +2,8 @@ from copy import deepcopy
 from fractions import Fraction
 from itertools import product
 
+import numpy as np
+
 from parsers import parse_src
 from preprocessing.upper_prior_prep import (
     exponential_to_bgd,
@@ -12,6 +14,7 @@ from preprocessing.upper_prior_prep import (
     uniform_to_bgd,
 )
 from distributions import BGD
+from distributions.mud import merge_breakpoints
 from Adapter import Adapter
 from Adapter.expr import Expr
 
@@ -41,11 +44,13 @@ class ProgramStructure:
         mode="MUD",
         center_subdivision=None,
         block_subdivision=None,
+        template_dirac_iterations=2,
     ):
         self.prior, self.prog, self.distribution_map = parse_src(prog_str)
         self.mode = mode
         self.center_subdivision = center_subdivision
         self.block_subdivision = block_subdivision
+        self.template_dirac_iterations = template_dirac_iterations
 
         self.ori_bgd, self.var_order = prior_to_bgd(
             self.prior,
@@ -147,13 +152,29 @@ class ProgramStructure:
         return True
 
     @staticmethod
-    def _expand_empty_left_edges(bgd: BGD, length=Fraction(1)) -> BGD:
+    def _bgd_right_side_is_empty_or_zero(bgd: BGD, dim: int) -> bool:
+        if bgd.right_lengths[dim] == 0:
+            return True
+
+        for index in product(range(3), repeat=bgd.ndim):
+            direction = bgd.index_to_direction(index)
+            if direction[dim] > 0 and not ProgramStructure._mud_is_static_zero(bgd.E[index]):
+                return False
+        return True
+
+    @staticmethod
+    def _expand_empty_edges(bgd: BGD, length=Fraction(1)) -> BGD:
         left_lengths = list(bgd.left_lengths)
+        right_lengths = list(bgd.right_lengths)
         changed = False
         for dim in range(bgd.ndim):
             if ProgramStructure._bgd_left_side_is_empty_or_zero(bgd, dim):
                 if left_lengths[dim] != length:
                     left_lengths[dim] = length
+                    changed = True
+            if ProgramStructure._bgd_right_side_is_empty_or_zero(bgd, dim):
+                if right_lengths[dim] != length:
+                    right_lengths[dim] = length
                     changed = True
         if not changed:
             return bgd
@@ -161,8 +182,114 @@ class ProgramStructure:
             bgd.center_lefts,
             bgd.center_rights,
             left_lengths,
-            bgd.right_lengths,
+            right_lengths,
         )
+
+    @staticmethod
+    def _mud_dirac_points_with_mass(mud, dim: int) -> set[Fraction]:
+        points = set()
+        for interval_index, (left, right) in enumerate(zip(mud.S[dim], mud.S[dim][1:])):
+            if left != right:
+                continue
+            slicer = [slice(None)] * mud.ndim
+            slicer[dim] = interval_index
+            values = mud.P[tuple(slicer)]
+            if any(value != 0 for value in np.asarray(values, dtype=object).flat):
+                points.add(left)
+        return points
+
+    @staticmethod
+    def _block_global_lefts(bgd: BGD, index) -> tuple[Fraction, ...]:
+        center_index = (1,) * bgd.ndim
+        if index == center_index:
+            return bgd.center_lefts
+        direction = bgd.index_to_direction(index)
+        lefts = []
+        for dim, value in enumerate(direction):
+            if value < 0:
+                lefts.append(bgd.center_lefts[dim] - bgd.left_lengths[dim])
+            elif value > 0:
+                lefts.append(bgd.center_rights[dim])
+            else:
+                lefts.append(bgd.center_lefts[dim])
+        return tuple(lefts)
+
+    @classmethod
+    def _global_dirac_points(cls, bgd: BGD) -> list[set[Fraction]]:
+        points = [set() for _ in range(bgd.ndim)]
+        center_index = (1,) * bgd.ndim
+        for index in product(range(3), repeat=bgd.ndim):
+            mud = bgd.E[index]
+            offsets = cls._block_global_lefts(bgd, index)
+            for dim in range(bgd.ndim):
+                for point in cls._mud_dirac_points_with_mass(mud, dim):
+                    if index == center_index:
+                        points[dim].add(point)
+                    else:
+                        points[dim].add(point + offsets[dim])
+        return points
+
+    @staticmethod
+    def _template_local_dirac_for_dim(bgd: BGD, index, dim: int, point: Fraction):
+        center_index = (1,) * bgd.ndim
+        if index == center_index:
+            if bgd.center_lefts[dim] <= point <= bgd.center_rights[dim]:
+                return point
+            return None
+
+        direction = bgd.index_to_direction(index)
+        if direction[dim] < 0:
+            period = bgd.left_lengths[dim]
+            if period <= 0 or point >= bgd.center_lefts[dim]:
+                return None
+            distance = bgd.center_lefts[dim] - point
+            phase = distance % period
+            if phase == 0:
+                return Fraction(0)
+            return period - phase
+        if direction[dim] > 0:
+            period = bgd.right_lengths[dim]
+            if period <= 0 or point <= bgd.center_rights[dim]:
+                return None
+            return (point - bgd.center_rights[dim]) % period
+
+        if bgd.center_lefts[dim] <= point <= bgd.center_rights[dim]:
+            return point - bgd.center_lefts[dim]
+        return None
+
+    @classmethod
+    def _add_probe_diracs_to_template(cls, template: BGD, probe: BGD) -> BGD:
+        global_points = cls._global_dirac_points(probe)
+        result_E = template._copy_E()
+
+        for index in product(range(3), repeat=template.ndim):
+            mud = result_E[index]
+            target_S = list(mud.S)
+            changed = False
+            for dim in range(template.ndim):
+                additions = []
+                for point in global_points[dim]:
+                    local_point = cls._template_local_dirac_for_dim(
+                        template,
+                        index,
+                        dim,
+                        point,
+                    )
+                    if local_point is not None:
+                        additions.append((local_point, local_point))
+                if additions:
+                    merged = merge_breakpoints(
+                        target_S[dim],
+                        *additions,
+                        preserve_dirac=True,
+                    )
+                    if merged != target_S[dim]:
+                        target_S[dim] = merged
+                        changed = True
+            if changed:
+                result_E[index] = mud.align(tuple(target_S))
+
+        return BGD(result_E, template.alpha, template.beta)
 
     def solve_bgd(self, adapter : Adapter = None, method="Park"): # method = "Park" | "Diabolo"
         """
@@ -233,12 +360,29 @@ class ProgramStructure:
                 rhs = instr.rhs
 
                 dist_bgd = self._placeholder_distribution_bgd(rhs)
+                dist_add = None
+                if isinstance(rhs, BinopExpr) and rhs.operator == Binop.PLUS:
+                    if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
+                        rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
+                        if rhs_dist is not None:
+                            dist_add = rhs.rhs.var
+                    if isinstance(rhs.rhs, VarExpr) and rhs.rhs.var == lhs_name:
+                        lhs_dist = self._placeholder_distribution_bgd(rhs.lhs)
+                        if lhs_dist is not None:
+                            dist_add = rhs.lhs.var
 
                 if (not isinstance(rhs, BinopExpr) or rhs.operator not in (Binop.PLUS, Binop.MINUS)) and \
                     dist_bgd is None:
                     raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
 
-                if dist_bgd is not None:
+                if dist_add is not None:
+                    dist_name, params = self.distribution_map[dist_add]
+                    if dist_name != "Uniform":
+                        raise ValueError(
+                            f"Only x := x + Uniform(a,b) is supported for distribution addition, got {dist_name}"
+                        )
+                    c = ("add_uniform", params)
+                elif dist_bgd is not None:
                     c = dist_bgd
                 elif isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name and isinstance(rhs.rhs,
                                                                                            (NatLitExpr, RealLitExpr)):
@@ -293,6 +437,16 @@ class ProgramStructure:
                     if isinstance(value, BGD):
                         return
                     dim = self.var_map[lhs_name]
+                    if isinstance(value, tuple) and value[0] == "add_uniform":
+                        low, high = value[1]
+                        width = Fraction(high) - Fraction(low)
+                        if width <= 0:
+                            raise ValueError("Uniform addition requires low < high")
+                        if Fraction(low) < 0:
+                            left_periods[dim] = max(left_periods[dim], -Fraction(low))
+                        if Fraction(high) > 0:
+                            right_periods[dim] = max(right_periods[dim], Fraction(high))
+                        return
                     value = Fraction(value)
                     if value < 0:
                         left_periods[dim] = max(left_periods[dim], -value)
@@ -342,12 +496,21 @@ class ProgramStructure:
                 lhs_name, c = validate_assignment(instr)
                 if isinstance(c, BGD):
                     ctx_bgd = ctx_bgd.replace_dim(self.var_map[lhs_name], c)
+                elif isinstance(c, tuple) and c[0] == "add_uniform":
+                    dim = self.var_map[lhs_name]
+                    low, high = c[1]
+                    ctx_bgd = ctx_bgd.convolve_uniform(
+                        dim,
+                        low,
+                        high,
+                        max_fn=self._max_fn(solver),
+                    )
                 else:
                     ctx_bgd = ctx_bgd.add_constant(self.var_map[lhs_name], c)
             elif isinstance(instr, WhileInstr):
                 if adapter is None:
                     raise ValueError("while requires an adapter")
-                ctx_bgd = self._expand_empty_left_edges(ctx_bgd)
+                ctx_bgd = self._expand_empty_edges(ctx_bgd)
                 if isinstance(instr.cond, RealLitExpr):
                     restrict = lambda bgd: bgd.scale(instr.cond.value)
                     restrict_neg = lambda bgd: bgd.scale(1. - instr.cond.value)
@@ -372,10 +535,14 @@ class ProgramStructure:
                 self_while_counter = while_counter
                 while_counter += 1
 
+                def run_loop_body_once(bgd):
+                    result = restrict(bgd)
+                    for body_instr in instr.body:
+                        result = walk_instr(body_instr, result, solver)
+                    return result
+
                 # test
-                test_bgd = restrict(ctx_bgd)
-                for s in instr.body:
-                    test_bgd = walk_instr(s, test_bgd, solver)
+                test_bgd = run_loop_body_once(ctx_bgd)
 
                 template = self._common_frame_template(
                     ctx_bgd,
@@ -383,6 +550,11 @@ class ProgramStructure:
                     max_fn=self._max_fn(solver),
                 )
                 template = widen_template_periods(template, instr.body)
+                if self.template_dirac_iterations > 0:
+                    probe_bgd = test_bgd
+                    for _ in range(self.template_dirac_iterations):
+                        probe_bgd = run_loop_body_once(probe_bgd)
+                    template = self._add_probe_diracs_to_template(template, probe_bgd)
 
                 # solve
                 if method == "Park":
@@ -421,6 +593,18 @@ class ProgramStructure:
                 if need_solve:
                     ctx_bgd = adapter.solve_bgd_expr(ctx_bgd, solver)
             elif isinstance(instr, IfInstr):
+                if isinstance(instr.cond, (NatLitExpr, RealLitExpr)):
+                    val = validate_choice_prob(instr.cond)
+                    left_bgd = ctx_bgd
+                    right_bgd = ctx_bgd
+                    for s in instr.true:
+                        left_bgd = walk_instr(s, left_bgd, solver)
+                    for s in instr.false:
+                        right_bgd = walk_instr(s, right_bgd, solver)
+                    return left_bgd.scale(val).add(
+                        right_bgd.scale(1 - val),
+                        max_fn=self._max_fn(solver),
+                    )
                 var_name, intervals = validate_if_condition(instr.cond)
                 neg_intervals = interval_complement(intervals)
                 true_bgd = self._restrict_intervals_bgd(

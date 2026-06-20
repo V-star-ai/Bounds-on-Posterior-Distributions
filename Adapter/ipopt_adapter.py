@@ -65,28 +65,55 @@ class IpoptAdapter(Adapter):
         return a if a >= b else b
 
     def _eval_expr(self, expr: Expr, x: np.ndarray, var_index: Dict[str, int]) -> float:
+        return self._eval_expr_cached(expr, x, var_index, {})
+
+    def _eval_expr_cached(
+        self,
+        expr: Expr,
+        x: np.ndarray,
+        var_index: Dict[str, int],
+        cache: Dict[int, float],
+    ) -> float:
+        key = id(expr)
+        if key in cache:
+            return cache[key]
+
         if isinstance(expr, Var):
-            return float(x[var_index[expr.name]])
-        if isinstance(expr, Const):
-            return float(expr.value)
-        if isinstance(expr, FractionConst):
-            return float(expr.value)
-        if isinstance(expr, Add):
-            return self._eval_expr(expr.left, x, var_index) + self._eval_expr(expr.right, x, var_index)
-        if isinstance(expr, Sub):
-            return self._eval_expr(expr.left, x, var_index) - self._eval_expr(expr.right, x, var_index)
-        if isinstance(expr, Mul):
-            return self._eval_expr(expr.left, x, var_index) * self._eval_expr(expr.right, x, var_index)
-        if isinstance(expr, Div):
-            return self._eval_expr(expr.left, x, var_index) / self._eval_expr(expr.right, x, var_index)
-        if isinstance(expr, Pow):
-            return self._eval_expr(expr.left, x, var_index) ** self._eval_expr(expr.right, x, var_index)
-        if isinstance(expr, Max):
-            return self._smooth_max(
-                self._eval_expr(expr.left, x, var_index),
-                self._eval_expr(expr.right, x, var_index),
+            value = float(x[var_index[expr.name]])
+        elif isinstance(expr, Const):
+            value = float(expr.value)
+        elif isinstance(expr, FractionConst):
+            value = float(expr.value)
+        elif isinstance(expr, Add):
+            value = self._eval_expr_cached(
+                expr.left, x, var_index, cache
+            ) + self._eval_expr_cached(expr.right, x, var_index, cache)
+        elif isinstance(expr, Sub):
+            value = self._eval_expr_cached(
+                expr.left, x, var_index, cache
+            ) - self._eval_expr_cached(expr.right, x, var_index, cache)
+        elif isinstance(expr, Mul):
+            value = self._eval_expr_cached(
+                expr.left, x, var_index, cache
+            ) * self._eval_expr_cached(expr.right, x, var_index, cache)
+        elif isinstance(expr, Div):
+            value = self._eval_expr_cached(
+                expr.left, x, var_index, cache
+            ) / self._eval_expr_cached(expr.right, x, var_index, cache)
+        elif isinstance(expr, Pow):
+            value = self._eval_expr_cached(
+                expr.left, x, var_index, cache
+            ) ** self._eval_expr_cached(expr.right, x, var_index, cache)
+        elif isinstance(expr, Max):
+            value = self._smooth_max(
+                self._eval_expr_cached(expr.left, x, var_index, cache),
+                self._eval_expr_cached(expr.right, x, var_index, cache),
             )
-        raise TypeError(expr)
+        else:
+            raise TypeError(expr)
+
+        cache[key] = value
+        return value
 
     def solve(self, vars, constraints, objective=None):
         try:
@@ -117,7 +144,8 @@ class IpoptAdapter(Adapter):
         print(
             f"[IpoptAdapter] variables={n}, constraints={m}, "
             f"raw_constraints={len(constraints)}, "
-            f"objective={'provided' if has_objective else 'zero'}"
+            f"objective={'provided' if has_objective else 'zero'}",
+            flush=True,
         )
 
         # Variable bounds (use wide bounds; tighten for alpha/beta for stability)
@@ -150,14 +178,15 @@ class IpoptAdapter(Adapter):
             if m == 0:
                 return np.zeros(0, dtype=float)
             vals = np.zeros(m, dtype=float)
+            cache: Dict[int, float] = {}
             for i, spec in enumerate(constraint_specs):
-                left_val = self._eval_expr(spec.left, x, var_index)
-                right_val = self._eval_expr(spec.right, x, var_index)
+                left_val = self._eval_expr_cached(spec.left, x, var_index, cache)
+                right_val = self._eval_expr_cached(spec.right, x, var_index, cache)
                 vals[i] = left_val - right_val
             return vals
 
         def _objective(x):
-            return self._eval_expr(objective_expr, x, var_index)
+            return self._eval_expr_cached(objective_expr, x, var_index, {})
 
         def _objective_gradient(x):
             grad = np.zeros(n, dtype=float)
@@ -237,7 +266,7 @@ class IpoptAdapter(Adapter):
 
         result = {name: float(x[idx]) for name, idx in var_index.items()}
         if has_objective:
-            print(f"[IpoptAdapter] objective_value={_objective(x)}")
+            print(f"[IpoptAdapter] objective_value={_objective(x)}", flush=True)
         return result
 
     def solve_bgd_expr(self, bgd_expr, envs):
