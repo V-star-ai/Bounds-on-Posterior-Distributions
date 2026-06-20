@@ -16,7 +16,13 @@ from Adapter import Adapter
 from Adapter.expr import Expr
 
 from probably.pgcl.ast.expressions import Binop, BinopExpr, UnopExpr, VarExpr, NatLitExpr, RealLitExpr
-from intervals import const_int_value, interval_intersect, interval_union, interval_complement
+from intervals import (
+    const_int_value,
+    interval_complement,
+    interval_intersect,
+    interval_is_empty,
+    interval_union,
+)
 from probably.pgcl.ast.instructions import (
     AsgnInstr,
     ChoiceInstr,
@@ -93,15 +99,16 @@ class ProgramStructure:
 
     def _restrict_intervals_bgd(self, bgd: BGD, dim: int, intervals, *, max_fn=None) -> BGD:
         pieces = []
-        for lo, hi in interval_union(intervals, []):
-            if lo is not None and hi is not None and lo >= hi:
+        for lo, lo_closed, hi, hi_closed in interval_union(intervals, []):
+            interval = (lo, lo_closed, hi, hi_closed)
+            if interval_is_empty(interval):
                 continue
 
             piece = bgd
             if lo is not None:
-                piece = piece.restrict(dim, ">=", lo)
+                piece = piece.restrict(dim, ">=" if lo_closed else ">", lo)
             if hi is not None:
-                piece = piece.restrict(dim, "<", hi)
+                piece = piece.restrict(dim, "<=" if hi_closed else "<", hi)
             pieces.append(piece)
 
         if not pieces:
@@ -181,24 +188,44 @@ class ProgramStructure:
                     if op == Binop.AND:
                         return v1, interval_intersect(i1, i2)
                     return v1, interval_union(i1, i2)
-                if op == Binop.LEQ:
-                    if not isinstance(expr.lhs, (NatLitExpr, RealLitExpr)):
-                        raise ValueError("If condition must be c <= x or x < c")
-                    if not isinstance(expr.rhs, VarExpr):
-                        raise ValueError("If condition must be c <= x or x < c")
-                    c = const_int_value(expr.lhs)
-                    return expr.rhs.var, [(c, None)]
-                if op == Binop.LT:
-                    if not isinstance(expr.lhs, VarExpr):
-                        raise ValueError("If condition must be c <= x or x < c")
-                    if not isinstance(expr.rhs, (NatLitExpr, RealLitExpr)):
-                        raise ValueError("If condition must be c <= x or x < c")
-                    c = const_int_value(expr.rhs)
-                    return expr.lhs.var, [(None, c)]
-                raise ValueError("If condition must be c <= x or x < c with logical combination")
+
+                def atom(var_name, atom_op, constant):
+                    if atom_op == Binop.LT:
+                        return var_name, [(None, False, constant, False)]
+                    if atom_op == Binop.LEQ:
+                        return var_name, [(None, False, constant, True)]
+                    if atom_op == Binop.GT:
+                        return var_name, [(constant, False, None, False)]
+                    if atom_op == Binop.GEQ:
+                        return var_name, [(constant, True, None, False)]
+                    if atom_op == Binop.EQ:
+                        return var_name, [(constant, True, constant, True)]
+                    raise ValueError(
+                        "If condition must use <, <=, >, >=, or = with one variable and one numeric literal"
+                    )
+
+                if op in (Binop.LT, Binop.LEQ, Binop.GT, Binop.GEQ, Binop.EQ):
+                    if isinstance(expr.lhs, VarExpr) and isinstance(expr.rhs, (NatLitExpr, RealLitExpr)):
+                        return atom(expr.lhs.var, op, const_int_value(expr.rhs))
+                    if isinstance(expr.lhs, (NatLitExpr, RealLitExpr)) and isinstance(expr.rhs, VarExpr):
+                        reverse = {
+                            Binop.LT: Binop.GT,
+                            Binop.LEQ: Binop.GEQ,
+                            Binop.GT: Binop.LT,
+                            Binop.GEQ: Binop.LEQ,
+                            Binop.EQ: Binop.EQ,
+                        }[op]
+                        return atom(expr.rhs.var, reverse, const_int_value(expr.lhs))
+                    raise ValueError(
+                        "If condition must compare one variable with one numeric literal"
+                    )
+
+                raise ValueError(
+                    "If condition must use <, <=, >, >=, or = with logical combination"
+                )
             if isinstance(expr, UnopExpr):
                 return validate_if_condition(expr.expr)
-            raise ValueError("If condition must be c <= x or c < x with logical combination")
+            raise ValueError("If condition must compare a variable with a numeric literal")
 
         def validate_assignment(instr):
             if isinstance(instr, AsgnInstr):

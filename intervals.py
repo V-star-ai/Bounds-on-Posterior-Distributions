@@ -1,7 +1,7 @@
 from fractions import Fraction
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
-Interval = Tuple[Optional[Fraction], Optional[Fraction]]
+Interval = Tuple[Optional[Fraction], bool, Optional[Fraction], bool]
 
 
 def const_int_value(expr):
@@ -10,92 +10,135 @@ def const_int_value(expr):
     if isinstance(expr, NatLitExpr):
         return Fraction(expr.value)
     if isinstance(expr, RealLitExpr):
-        fr = expr.to_fraction()
-        return fr
-    raise ValueError("If condition constant must be an fraction literal")
+        return expr.to_fraction()
+    raise ValueError("If condition constant must be a fraction literal")
 
 
-def interval_union(a: List[Interval], b: List[Interval]) -> List[Interval]:
-    if not a:
-        return list(b)
-    if not b:
-        return list(a)
-
-    def key_lo(it):
-        lo, _ = it
-        return -float("inf") if lo is None else lo
-
-    merged = []
-    for lo, hi in sorted(list(a) + list(b), key=key_lo):
-        if not merged:
-            merged.append([lo, hi])
-            continue
-        mlo, mhi = merged[-1]
-        if mhi is None:
-            continue
-        if lo is None or lo <= mhi:
-            if mhi is None or hi is None:
-                merged[-1][1] = None
-            else:
-                merged[-1][1] = max(mhi, hi)
-        else:
-            merged.append([lo, hi])
-    return [tuple(x) for x in merged]
+def interval_is_empty(interval: Interval) -> bool:
+    lo, lo_closed, hi, hi_closed = interval
+    if lo is None or hi is None:
+        return False
+    if lo < hi:
+        return False
+    if lo > hi:
+        return True
+    return not (lo_closed and hi_closed)
 
 
-def interval_intersect(a: List[Interval], b: List[Interval]) -> List[Interval]:
-    if not a or not b:
+def _interval_lo_key(interval: Interval):
+    lo, lo_closed, _hi, _hi_closed = interval
+    return (float("-inf") if lo is None else lo, 0 if lo_closed else 1)
+
+
+def _interval_intersection(left: Interval, right: Interval) -> Interval | None:
+    lo1, lo1_closed, hi1, hi1_closed = left
+    lo2, lo2_closed, hi2, hi2_closed = right
+
+    if lo1 is None:
+        lo, lo_closed = lo2, lo2_closed
+    elif lo2 is None:
+        lo, lo_closed = lo1, lo1_closed
+    elif lo1 > lo2:
+        lo, lo_closed = lo1, lo1_closed
+    elif lo2 > lo1:
+        lo, lo_closed = lo2, lo2_closed
+    else:
+        lo, lo_closed = lo1, lo1_closed and lo2_closed
+
+    if hi1 is None:
+        hi, hi_closed = hi2, hi2_closed
+    elif hi2 is None:
+        hi, hi_closed = hi1, hi1_closed
+    elif hi1 < hi2:
+        hi, hi_closed = hi1, hi1_closed
+    elif hi2 < hi1:
+        hi, hi_closed = hi2, hi2_closed
+    else:
+        hi, hi_closed = hi1, hi1_closed and hi2_closed
+
+    result = (lo, lo_closed, hi, hi_closed)
+    if interval_is_empty(result):
+        return None
+    return result
+
+
+def interval_intersect(
+    left_intervals: List[Interval], right_intervals: List[Interval]
+) -> List[Interval]:
+    result = []
+    for left in left_intervals:
+        for right in right_intervals:
+            intersection = _interval_intersection(left, right)
+            if intersection is not None:
+                result.append(intersection)
+    return interval_union(result, [])
+
+
+def _intervals_touch_or_overlap(left: Interval, right: Interval) -> bool:
+    _lo1, _lo1_closed, hi1, hi1_closed = left
+    lo2, lo2_closed, _hi2, _hi2_closed = right
+    if hi1 is None or lo2 is None:
+        return True
+    if hi1 > lo2:
+        return True
+    if hi1 < lo2:
+        return False
+    return hi1_closed or lo2_closed
+
+
+def _merge_intervals(left: Interval, right: Interval) -> Interval:
+    lo1, lo1_closed, hi1, hi1_closed = left
+    _lo2, _lo2_closed, hi2, hi2_closed = right
+
+    if hi1 is None or hi2 is None:
+        return lo1, lo1_closed, None, False
+    if hi1 > hi2:
+        return left
+    if hi2 > hi1:
+        return lo1, lo1_closed, hi2, hi2_closed
+    return lo1, lo1_closed, hi1, hi1_closed or hi2_closed
+
+
+def interval_union(
+    left_intervals: List[Interval], right_intervals: List[Interval]
+) -> List[Interval]:
+    intervals = [
+        interval
+        for interval in list(left_intervals) + list(right_intervals)
+        if not interval_is_empty(interval)
+    ]
+    if not intervals:
         return []
 
-    def hi_val(hi):
-        return float("inf") if hi is None else hi
-
-    def lo_val(lo):
-        return -float("inf") if lo is None else lo
-
-    res = []
-    for lo1, hi1 in a:
-        for lo2, hi2 in b:
-            lo = max(lo_val(lo1), lo_val(lo2))
-            hi = min(hi_val(hi1), hi_val(hi2))
-            if lo >= hi:
-                continue
-            out_lo = None if lo == -float("inf") else lo
-            out_hi = None if hi == float("inf") else hi
-            res.append((out_lo, out_hi))
-    return interval_union(res, [])
+    intervals.sort(key=_interval_lo_key)
+    merged = [intervals[0]]
+    for interval in intervals[1:]:
+        if _intervals_touch_or_overlap(merged[-1], interval):
+            merged[-1] = _merge_intervals(merged[-1], interval)
+        else:
+            merged.append(interval)
+    return merged
 
 
 def interval_complement(intervals: List[Interval]) -> List[Interval]:
-    """
-    Complement of a union of intervals on the number line.
-    Input intervals are treated as [lo, hi) with None for -inf/+inf.
-    """
-    if not intervals:
-        return [(None, None)]
+    normalized = interval_union(intervals, [])
+    if not normalized:
+        return [(None, False, None, False)]
 
-    norm = interval_union(intervals, [])
-    res: List[Interval] = []
-
-    # left gap
-    first_lo, _ = norm[0]
+    result = []
+    first_lo, first_lo_closed, _first_hi, _first_hi_closed = normalized[0]
     if first_lo is not None:
-        res.append((None, first_lo))
+        result.append((None, False, first_lo, not first_lo_closed))
 
-    # middle gaps
-    for i in range(len(norm) - 1):
-        _, hi = norm[i]
-        lo2, _ = norm[i + 1]
-        if hi is None:
-            return res
-        if lo2 is None:
-            continue
-        if hi < lo2:
-            res.append((hi, lo2))
+    for left, right in zip(normalized, normalized[1:]):
+        _lo1, _lo1_closed, hi1, hi1_closed = left
+        lo2, lo2_closed, _hi2, _hi2_closed = right
+        gap = (hi1, not hi1_closed, lo2, not lo2_closed)
+        if not interval_is_empty(gap):
+            result.append(gap)
 
-    # right gap
-    _, last_hi = norm[-1]
+    _last_lo, _last_lo_closed, last_hi, last_hi_closed = normalized[-1]
     if last_hi is not None:
-        res.append((last_hi, None))
+        result.append((last_hi, not last_hi_closed, None, False))
 
-    return res
+    return result

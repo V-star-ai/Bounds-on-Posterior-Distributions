@@ -1013,18 +1013,26 @@ class BGD:
         left = self.center_lefts[dim]
         right = self.center_rights[dim]
         if threshold < left:
+            if self.left_lengths[dim] == 0:
+                return self._copy_E()
             return self._restrict_with_left_prefix(dim, op, threshold)
         if threshold <= right:
             return self._restrict_inside_center(dim, op, threshold, keep_right=True)
+        if self.right_lengths[dim] == 0:
+            return self._empty_restrict_all(dim, threshold)
         return self._restrict_with_right_phase(dim, op, threshold)
 
     def _restrict_less(self, dim: int, op: str, threshold: Fraction) -> np.ndarray:
         left = self.center_lefts[dim]
         right = self.center_rights[dim]
         if threshold > right:
+            if self.right_lengths[dim] == 0:
+                return self._copy_E()
             return self._restrict_with_right_prefix(dim, op, threshold)
         if threshold >= left:
             return self._restrict_inside_center(dim, op, threshold, keep_right=False)
+        if self.left_lengths[dim] == 0:
+            return self._empty_restrict_all(dim, threshold)
         return self._restrict_with_left_phase(dim, op, threshold)
 
     def _restrict_inside_center(
@@ -1220,6 +1228,12 @@ class BGD:
         result = list(index)
         result[dim] = value
         return tuple(result)
+
+    def _empty_restrict_all(self, dim: int, threshold: Fraction) -> np.ndarray:
+        result = np.empty(self.E.shape, dtype=object)
+        for index in iter_indices(self.E.shape):
+            result[index] = self._empty_for_index(index, dim, threshold)
+        return result
 
     def _empty_for_index(self, index: Index, dim: int, threshold: Fraction) -> MUD:
         point = threshold if index == (1,) * self.ndim else Fraction(0)
