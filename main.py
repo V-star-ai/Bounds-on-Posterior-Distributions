@@ -83,6 +83,10 @@ def get_template_config(config):
     template = config.get("template", {})
     return {
         "dirac_iterations": int(template.get("dirac_iterations", 2)),
+        "uniform_convolution_max_interval": template.get(
+            "uniform_convolution_max_interval",
+            0.5,
+        ),
     }
 
 
@@ -139,7 +143,7 @@ def main():
     parser.add_argument(
         "--program",
         "-p",
-        default="./benchmarks/PLDI22/add_uniform.txt",
+        default="./benchmarks/PLDI22/cavex5.txt",
         help="Program source file containing prior: and program: sections",
     )
     args = parser.parse_args()
@@ -155,6 +159,9 @@ def main():
         center_subdivision=prior_config["center_subdivision"],
         block_subdivision=prior_config["block_subdivision"],
         template_dirac_iterations=template_config["dirac_iterations"],
+        uniform_convolution_max_interval=template_config[
+            "uniform_convolution_max_interval"
+        ],
     )
     print(prog.prog)
     print("ori center S: ", prog.ori_bgd.C.S)

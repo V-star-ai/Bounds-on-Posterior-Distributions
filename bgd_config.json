@@ -11,7 +11,8 @@
     "show": true
   },
   "template": {
-    "dirac_iterations": 2
+    "dirac_iterations": 2,
+    "uniform_convolution_max_interval": 0.5
   },
   "solver": {
     "name": "ipopt",

@@ -188,16 +188,38 @@ class IpoptAdapter(Adapter):
         def _objective(x):
             return self._eval_expr_cached(objective_expr, x, var_index, {})
 
+        def _finite_difference(fn, base, x, j):
+            step = self.fd_eps
+            if x[j] + step <= ub[j]:
+                x2 = np.array(x, copy=True)
+                x2[j] += step
+                return (fn(x2) - base) / step
+            if x[j] - step >= lb[j]:
+                x2 = np.array(x, copy=True)
+                x2[j] -= step
+                return (base - fn(x2)) / step
+
+            upper_step = ub[j] - x[j]
+            lower_step = x[j] - lb[j]
+            if upper_step > 0:
+                x2 = np.array(x, copy=True)
+                x2[j] = ub[j]
+                return (fn(x2) - base) / upper_step
+            if lower_step > 0:
+                x2 = np.array(x, copy=True)
+                x2[j] = lb[j]
+                return (base - fn(x2)) / lower_step
+            if np.isscalar(base):
+                return 0.0
+            return np.zeros_like(base, dtype=float)
+
         def _objective_gradient(x):
             grad = np.zeros(n, dtype=float)
             if n == 0:
                 return grad
             base = _objective(x)
-            step = self.fd_eps
             for j in range(n):
-                x2 = np.array(x, copy=True)
-                x2[j] += step
-                grad[j] = (_objective(x2) - base) / step
+                grad[j] = _finite_difference(_objective, base, x, j)
             return grad
 
         def _jacobian(x):
@@ -205,11 +227,8 @@ class IpoptAdapter(Adapter):
                 return np.zeros(0, dtype=float)
             base = _constraints(x)
             jac = np.zeros((m, n), dtype=float)
-            step = self.fd_eps
             for j in range(n):
-                x2 = np.array(x, copy=True)
-                x2[j] += step
-                jac[:, j] = (_constraints(x2) - base) / step
+                jac[:, j] = _finite_difference(_constraints, base, x, j)
             return jac.reshape(-1)
 
         class _Problem:

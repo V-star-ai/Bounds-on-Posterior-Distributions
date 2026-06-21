@@ -45,12 +45,18 @@ class ProgramStructure:
         center_subdivision=None,
         block_subdivision=None,
         template_dirac_iterations=2,
+        uniform_convolution_max_interval=Fraction(1, 2),
     ):
         self.prior, self.prog, self.distribution_map = parse_src(prog_str)
         self.mode = mode
         self.center_subdivision = center_subdivision
         self.block_subdivision = block_subdivision
         self.template_dirac_iterations = template_dirac_iterations
+        self.uniform_convolution_max_interval = (
+            None
+            if uniform_convolution_max_interval is None
+            else Fraction(uniform_convolution_max_interval)
+        )
 
         self.ori_bgd, self.var_order = prior_to_bgd(
             self.prior,
@@ -163,18 +169,29 @@ class ProgramStructure:
         return True
 
     @staticmethod
-    def _expand_empty_edges(bgd: BGD, length=Fraction(1)) -> BGD:
+    def _expand_empty_edges(
+        bgd: BGD,
+        required_left=None,
+        required_right=None,
+        length=Fraction(1),
+    ) -> BGD:
         left_lengths = list(bgd.left_lengths)
         right_lengths = list(bgd.right_lengths)
         changed = False
         for dim in range(bgd.ndim):
-            if ProgramStructure._bgd_left_side_is_empty_or_zero(bgd, dim):
-                if left_lengths[dim] != length:
-                    left_lengths[dim] = length
+            left_target = (
+                length if required_left is None else Fraction(required_left[dim])
+            )
+            right_target = (
+                length if required_right is None else Fraction(required_right[dim])
+            )
+            if left_target > 0 and ProgramStructure._bgd_left_side_is_empty_or_zero(bgd, dim):
+                if left_lengths[dim] != left_target:
+                    left_lengths[dim] = left_target
                     changed = True
-            if ProgramStructure._bgd_right_side_is_empty_or_zero(bgd, dim):
-                if right_lengths[dim] != length:
-                    right_lengths[dim] = length
+            if right_target > 0 and ProgramStructure._bgd_right_side_is_empty_or_zero(bgd, dim):
+                if right_lengths[dim] != right_target:
+                    right_lengths[dim] = right_target
                     changed = True
         if not changed:
             return bgd
@@ -361,26 +378,36 @@ class ProgramStructure:
 
                 dist_bgd = self._placeholder_distribution_bgd(rhs)
                 dist_add = None
-                if isinstance(rhs, BinopExpr) and rhs.operator == Binop.PLUS:
-                    if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
-                        rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
-                        if rhs_dist is not None:
-                            dist_add = rhs.rhs.var
-                    if isinstance(rhs.rhs, VarExpr) and rhs.rhs.var == lhs_name:
-                        lhs_dist = self._placeholder_distribution_bgd(rhs.lhs)
-                        if lhs_dist is not None:
-                            dist_add = rhs.lhs.var
+                if isinstance(rhs, BinopExpr):
+                    if rhs.operator == Binop.PLUS:
+                        if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
+                            rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
+                            if rhs_dist is not None:
+                                dist_add = (rhs.rhs.var, 1)
+                        if isinstance(rhs.rhs, VarExpr) and rhs.rhs.var == lhs_name:
+                            lhs_dist = self._placeholder_distribution_bgd(rhs.lhs)
+                            if lhs_dist is not None:
+                                dist_add = (rhs.lhs.var, 1)
+                    elif rhs.operator == Binop.MINUS:
+                        if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
+                            rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
+                            if rhs_dist is not None:
+                                dist_add = (rhs.rhs.var, -1)
 
                 if (not isinstance(rhs, BinopExpr) or rhs.operator not in (Binop.PLUS, Binop.MINUS)) and \
                     dist_bgd is None:
                     raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
 
                 if dist_add is not None:
-                    dist_name, params = self.distribution_map[dist_add]
+                    dist_var, sign = dist_add
+                    dist_name, params = self.distribution_map[dist_var]
                     if dist_name != "Uniform":
                         raise ValueError(
-                            f"Only x := x + Uniform(a,b) is supported for distribution addition, got {dist_name}"
+                            f"Only x := x +/- Uniform(a,b) is supported for distribution addition, got {dist_name}"
                         )
+                    if sign < 0:
+                        low, high = params
+                        params = (-Fraction(high), -Fraction(low))
                     c = ("add_uniform", params)
                 elif dist_bgd is not None:
                     c = dist_bgd
@@ -504,13 +531,19 @@ class ProgramStructure:
                         low,
                         high,
                         max_fn=self._max_fn(solver),
+                        max_interval=self.uniform_convolution_max_interval,
                     )
                 else:
                     ctx_bgd = ctx_bgd.add_constant(self.var_map[lhs_name], c)
             elif isinstance(instr, WhileInstr):
                 if adapter is None:
                     raise ValueError("while requires an adapter")
-                ctx_bgd = self._expand_empty_edges(ctx_bgd)
+                required_left, required_right = template_shift_periods(instr.body)
+                ctx_bgd = self._expand_empty_edges(
+                    ctx_bgd,
+                    required_left=required_left,
+                    required_right=required_right,
+                )
                 if isinstance(instr.cond, RealLitExpr):
                     restrict = lambda bgd: bgd.scale(instr.cond.value)
                     restrict_neg = lambda bgd: bgd.scale(1. - instr.cond.value)

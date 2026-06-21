@@ -168,13 +168,12 @@ class Adapter(ABC):
             total_cells += cell_count
             shape_expr = " * ".join(str(size) for size in mud.shape) or "1"
             print(f"  E{edge_index} | {shape_expr} = {cell_count}", flush=True)
-            if edge_index and edge_index[0] == 1:
-                interval_counts = tuple(len(axis) - 1 for axis in mud.S)
-                breakpoints = tuple(format_breakpoints(axis) for axis in mud.S)
-                print(
-                    f"    interval_counts={interval_counts}, S={breakpoints}",
-                    flush=True,
-                )
+            interval_counts = tuple(len(axis) - 1 for axis in mud.S)
+            breakpoints = tuple(format_breakpoints(axis) for axis in mud.S)
+            print(
+                f"    interval_counts={interval_counts}, S={breakpoints}",
+                flush=True,
+            )
 
         decay_vars = 2 * template.ndim
         print(
