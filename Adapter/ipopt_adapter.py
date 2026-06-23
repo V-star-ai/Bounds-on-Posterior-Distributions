@@ -1,4 +1,5 @@
 import math
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
@@ -44,6 +45,8 @@ class IpoptAdapter(Adapter):
         smooth_max_eps: float = 0.0,
         fd_eps: float = 1e-6,
         print_level: int = 0,
+        compile_expr: bool = True,
+        profile: bool = True,
     ):
         self.max_iter = int(max_iter)
         self.tol = float(tol)
@@ -51,6 +54,10 @@ class IpoptAdapter(Adapter):
         self.smooth_max_eps = float(smooth_max_eps)
         self.fd_eps = float(fd_eps)
         self.print_level = int(print_level)
+        self.compile_expr = bool(compile_expr)
+        self.profile = bool(profile)
+        self.last_stats = {}
+        self._active_stats = None
 
     def build_var(self, name):
         # Store name only; ipopt uses indexed vectors internally.
@@ -74,8 +81,13 @@ class IpoptAdapter(Adapter):
         var_index: Dict[str, int],
         cache: Dict[int, float],
     ) -> float:
+        stats = self._active_stats
+        if stats is not None:
+            stats["recursive_expr_calls"] += 1
         key = id(expr)
         if key in cache:
+            if stats is not None:
+                stats["recursive_cache_hits"] += 1
             return cache[key]
 
         if isinstance(expr, Var):
@@ -115,11 +127,128 @@ class IpoptAdapter(Adapter):
         cache[key] = value
         return value
 
+    def _compile_expr_source(self, result_expr, var_index: Dict[str, int], name: str):
+        memo = {}
+        lines = ["def _compiled(x, _smooth_max):"]
+        counter = 0
+
+        def emit(expr: Expr) -> str:
+            nonlocal counter
+            key = id(expr)
+            if key in memo:
+                return memo[key]
+
+            if isinstance(expr, Var):
+                return f"x[{var_index[expr.name]}]"
+            if isinstance(expr, Const):
+                return repr(float(expr.value))
+            if isinstance(expr, FractionConst):
+                return repr(float(expr.value))
+
+            left = emit(expr.left)
+            right = emit(expr.right)
+            var_name = f"v{counter}"
+            counter += 1
+
+            if isinstance(expr, Add):
+                source = f"{left}+{right}"
+            elif isinstance(expr, Sub):
+                source = f"{left}-{right}"
+            elif isinstance(expr, Mul):
+                source = f"{left}*{right}"
+            elif isinstance(expr, Div):
+                source = f"{left}/{right}"
+            elif isinstance(expr, Pow):
+                source = f"{left}**{right}"
+            elif isinstance(expr, Max):
+                source = f"_smooth_max({left},{right})"
+            else:
+                raise TypeError(expr)
+
+            lines.append(f"    {var_name} = {source}")
+            memo[key] = var_name
+            return var_name
+
+        result = emit(result_expr)
+        lines.append(f"    return float({result})")
+        source = "\n".join(lines)
+        if len(source) > 5_000_000:
+            raise ValueError(f"{name} compiled expression is too large")
+        namespace = {}
+        exec(
+            compile(source, f"<ipopt:{name}>", "exec"),
+            {"__builtins__": {}, "float": float},
+            namespace,
+        )
+        fn = namespace["_compiled"]
+        return lambda x: fn(x, self._smooth_max)
+
+    def _compile_expr_callable(self, expr: Expr, var_index: Dict[str, int], name: str):
+        return self._compile_expr_source(expr, var_index, name)
+
+    def _compile_constraint_callable(
+        self,
+        spec: _ConstraintSpec,
+        var_index: Dict[str, int],
+        name: str,
+    ):
+        return self._compile_expr_source(Sub(spec.left, spec.right), var_index, name)
+
+    def _new_stats(self):
+        return {
+            "objective_calls": 0,
+            "gradient_calls": 0,
+            "constraints_calls": 0,
+            "jacobian_calls": 0,
+            "compiled_expr_calls": 0,
+            "recursive_expr_calls": 0,
+            "recursive_cache_hits": 0,
+            "objective_time": 0.0,
+            "gradient_time": 0.0,
+            "constraints_time": 0.0,
+            "jacobian_time": 0.0,
+            "compile_time": 0.0,
+            "compiled_constraints": 0,
+            "compiled_mode": False,
+        }
+
+    def _print_stats(self, stats):
+        if not self.profile:
+            return
+        print(
+            "[IpoptAdapter stats] callbacks: "
+            f"objective={stats['objective_calls']}, "
+            f"gradient={stats['gradient_calls']}, "
+            f"constraints={stats['constraints_calls']}, "
+            f"jacobian={stats['jacobian_calls']}",
+            flush=True,
+        )
+        print(
+            "[IpoptAdapter stats] eval: "
+            f"compiled_mode={stats['compiled_mode']}, "
+            f"compiled_constraints={stats['compiled_constraints']}, "
+            f"compiled_expr_calls={stats['compiled_expr_calls']}, "
+            f"recursive_expr_calls={stats['recursive_expr_calls']}, "
+            f"recursive_cache_hits={stats['recursive_cache_hits']}",
+            flush=True,
+        )
+        print(
+            "[IpoptAdapter stats] time_sec: "
+            f"objective={stats['objective_time']:.4f}, "
+            f"gradient={stats['gradient_time']:.4f}, "
+            f"constraints={stats['constraints_time']:.4f}, "
+            f"jacobian={stats['jacobian_time']:.4f}, "
+            f"compile={stats['compile_time']:.4f}",
+            flush=True,
+        )
+
     def solve(self, vars, constraints, objective=None):
         try:
             import cyipopt  # type: ignore
         except Exception as exc:
             raise ImportError("cyipopt is required for IpoptAdapter") from exc
+        stats = self._new_stats()
+        self._active_stats = stats
 
         var_names = list(vars.keys())
         var_index = {name: i for i, name in enumerate(var_names)}
@@ -148,13 +277,64 @@ class IpoptAdapter(Adapter):
             flush=True,
         )
 
+        compiled_objective = None
+        compiled_constraints = None
+        if self.compile_expr:
+            compile_start = time.perf_counter()
+            try:
+                objective_failed = False
+                failed_constraints = 0
+                try:
+                    compiled_objective = self._compile_expr_callable(
+                        objective_expr,
+                        var_index,
+                        "objective",
+                    )
+                except Exception as exc:
+                    objective_failed = True
+                    compiled_objective = None
+                    print(
+                        f"[IpoptAdapter] objective compilation disabled: {exc}",
+                        flush=True,
+                    )
+                compiled_constraints = []
+                for i, spec in enumerate(constraint_specs):
+                    try:
+                        compiled_constraints.append(
+                            self._compile_constraint_callable(
+                                spec,
+                                var_index,
+                                f"constraint_{i}",
+                            )
+                        )
+                    except Exception:
+                        compiled_constraints.append(None)
+                        failed_constraints += 1
+                stats["compiled_constraints"] = sum(
+                    1 for fn in compiled_constraints if fn is not None
+                )
+                stats["compiled_mode"] = (
+                    compiled_objective is not None
+                    or stats["compiled_constraints"] > 0
+                )
+                if objective_failed or failed_constraints:
+                    print(
+                        "[IpoptAdapter] expression compilation fallback: "
+                        f"objective_failed={objective_failed}, "
+                        f"constraints_failed={failed_constraints}",
+                        flush=True,
+                    )
+            finally:
+                stats["compile_time"] += time.perf_counter() - compile_start
+
         # Variable bounds (use wide bounds; tighten for alpha/beta for stability)
         lb = np.full(n, -1e20, dtype=float)
         ub = np.full(n, 1e20, dtype=float)
+        decay_upper = 1.0 - max(self.constraint_eps, 10.0 * self.fd_eps)
         for i, name in enumerate(var_names):
             if "_alpha_" in name or "_beta_" in name:
                 lb[i] = 0.0
-                ub[i] = 1.0 - self.constraint_eps
+                ub[i] = decay_upper
 
         # Constraint bounds
         cl = np.full(m, -1e20, dtype=float)
@@ -175,18 +355,44 @@ class IpoptAdapter(Adapter):
                 raise TypeError(spec.op)
 
         def _constraints(x):
+            stats["constraints_calls"] += 1
+            start = time.perf_counter()
             if m == 0:
-                return np.zeros(0, dtype=float)
-            vals = np.zeros(m, dtype=float)
-            cache: Dict[int, float] = {}
-            for i, spec in enumerate(constraint_specs):
-                left_val = self._eval_expr_cached(spec.left, x, var_index, cache)
-                right_val = self._eval_expr_cached(spec.right, x, var_index, cache)
-                vals[i] = left_val - right_val
-            return vals
+                result = np.zeros(0, dtype=float)
+            elif compiled_constraints is not None:
+                vals = np.zeros(m, dtype=float)
+                cache: Dict[int, float] = {}
+                for i, spec in enumerate(constraint_specs):
+                    fn = compiled_constraints[i]
+                    if fn is None:
+                        left_val = self._eval_expr_cached(spec.left, x, var_index, cache)
+                        right_val = self._eval_expr_cached(spec.right, x, var_index, cache)
+                        vals[i] = left_val - right_val
+                    else:
+                        vals[i] = fn(x)
+                        stats["compiled_expr_calls"] += 1
+                result = vals
+            else:
+                vals = np.zeros(m, dtype=float)
+                cache: Dict[int, float] = {}
+                for i, spec in enumerate(constraint_specs):
+                    left_val = self._eval_expr_cached(spec.left, x, var_index, cache)
+                    right_val = self._eval_expr_cached(spec.right, x, var_index, cache)
+                    vals[i] = left_val - right_val
+                result = vals
+            stats["constraints_time"] += time.perf_counter() - start
+            return result
 
         def _objective(x):
-            return self._eval_expr_cached(objective_expr, x, var_index, {})
+            stats["objective_calls"] += 1
+            start = time.perf_counter()
+            if compiled_objective is not None:
+                value = compiled_objective(x)
+                stats["compiled_expr_calls"] += 1
+            else:
+                value = self._eval_expr_cached(objective_expr, x, var_index, {})
+            stats["objective_time"] += time.perf_counter() - start
+            return value
 
         def _finite_difference(fn, base, x, j):
             step = self.fd_eps
@@ -214,22 +420,29 @@ class IpoptAdapter(Adapter):
             return np.zeros_like(base, dtype=float)
 
         def _objective_gradient(x):
+            stats["gradient_calls"] += 1
+            start = time.perf_counter()
             grad = np.zeros(n, dtype=float)
             if n == 0:
                 return grad
             base = _objective(x)
             for j in range(n):
                 grad[j] = _finite_difference(_objective, base, x, j)
+            stats["gradient_time"] += time.perf_counter() - start
             return grad
 
         def _jacobian(x):
+            stats["jacobian_calls"] += 1
+            start = time.perf_counter()
             if m == 0:
                 return np.zeros(0, dtype=float)
             base = _constraints(x)
             jac = np.zeros((m, n), dtype=float)
             for j in range(n):
                 jac[:, j] = _finite_difference(_constraints, base, x, j)
-            return jac.reshape(-1)
+            result = jac.reshape(-1)
+            stats["jacobian_time"] += time.perf_counter() - start
+            return result
 
         class _Problem:
             def objective(self, x):
@@ -277,15 +490,27 @@ class IpoptAdapter(Adapter):
         nlp.add_option("print_level", self.print_level)
         nlp.add_option("hessian_approximation", "limited-memory")
 
-        x, info = nlp.solve(x0)
+        try:
+            x, info = nlp.solve(x0)
+        except Exception:
+            self.last_stats = stats.copy()
+            self._print_stats(stats)
+            self._active_stats = None
+            raise
 
         status = info.get("status") if isinstance(info, dict) else None
         if status not in (0, 1):
+            self.last_stats = stats.copy()
+            self._print_stats(stats)
+            self._active_stats = None
             raise RuntimeError(f"Ipopt failed to solve (status={status}, info={info})")
 
         result = {name: float(x[idx]) for name, idx in var_index.items()}
         if has_objective:
             print(f"[IpoptAdapter] objective_value={_objective(x)}", flush=True)
+        self.last_stats = stats.copy()
+        self._print_stats(stats)
+        self._active_stats = None
         return result
 
     def solve_bgd_expr(self, bgd_expr, envs):

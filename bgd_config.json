@@ -22,7 +22,9 @@
       "constraint_eps": 1e-8,
       "smooth_max_eps": 0.0,
       "fd_eps": 1e-6,
-      "print_level": 0
+      "print_level": 0,
+      "compile_expr": true,
+      "profile": true
     }
   }
 }

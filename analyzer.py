@@ -169,29 +169,18 @@ class ProgramStructure:
         return True
 
     @staticmethod
-    def _expand_empty_edges(
-        bgd: BGD,
-        required_left=None,
-        required_right=None,
-        length=Fraction(1),
-    ) -> BGD:
+    def _expand_empty_edges(bgd: BGD, length=Fraction(1)) -> BGD:
         left_lengths = list(bgd.left_lengths)
         right_lengths = list(bgd.right_lengths)
         changed = False
         for dim in range(bgd.ndim):
-            left_target = (
-                length if required_left is None else Fraction(required_left[dim])
-            )
-            right_target = (
-                length if required_right is None else Fraction(required_right[dim])
-            )
-            if left_target > 0 and ProgramStructure._bgd_left_side_is_empty_or_zero(bgd, dim):
-                if left_lengths[dim] != left_target:
-                    left_lengths[dim] = left_target
+            if ProgramStructure._bgd_left_side_is_empty_or_zero(bgd, dim):
+                if left_lengths[dim] != length:
+                    left_lengths[dim] = length
                     changed = True
-            if right_target > 0 and ProgramStructure._bgd_right_side_is_empty_or_zero(bgd, dim):
-                if right_lengths[dim] != right_target:
-                    right_lengths[dim] = right_target
+            if ProgramStructure._bgd_right_side_is_empty_or_zero(bgd, dim):
+                if right_lengths[dim] != length:
+                    right_lengths[dim] = length
                     changed = True
         if not changed:
             return bgd
@@ -538,12 +527,7 @@ class ProgramStructure:
             elif isinstance(instr, WhileInstr):
                 if adapter is None:
                     raise ValueError("while requires an adapter")
-                required_left, required_right = template_shift_periods(instr.body)
-                ctx_bgd = self._expand_empty_edges(
-                    ctx_bgd,
-                    required_left=required_left,
-                    required_right=required_right,
-                )
+                ctx_bgd = self._expand_empty_edges(ctx_bgd)
                 if isinstance(instr.cond, RealLitExpr):
                     restrict = lambda bgd: bgd.scale(instr.cond.value)
                     restrict_neg = lambda bgd: bgd.scale(1. - instr.cond.value)

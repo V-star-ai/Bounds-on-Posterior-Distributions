@@ -102,6 +102,8 @@ def get_solver_config(config):
             "smooth_max_eps": float(ipopt.get("smooth_max_eps", 0.0)),
             "fd_eps": float(ipopt.get("fd_eps", 1e-6)),
             "print_level": int(ipopt.get("print_level", 0)),
+            "compile_expr": bool(ipopt.get("compile_expr", True)),
+            "profile": bool(ipopt.get("profile", True)),
         },
     }
 
@@ -143,7 +145,7 @@ def main():
     parser.add_argument(
         "--program",
         "-p",
-        default="./benchmarks/PLDI22/cavex5.txt",
+        default="./benchmarks/PLDI22/exfig6.txt",
         help="Program source file containing prior: and program: sections",
     )
     args = parser.parse_args()
