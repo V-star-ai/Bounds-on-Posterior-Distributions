@@ -5,6 +5,7 @@ from distributions import BGD
 from abc import ABC, abstractmethod
 from Adapter.expr import Expr, Var, Const, CompareOp, Constraint, FractionConst, ensure_expr
 from Adapter.expr import Add, Sub, Mul, Div, Max, Pow
+from distributions.mud import _array_is_static_zero
 import numpy as np
 
 @dataclass
@@ -263,14 +264,31 @@ class Adapter(ABC):
             raise ValueError("template and bgd_constant dimensions do not match")
 
         envs = envs or AdapterEnvs({}, [])
-        template = self._close_template_frame_for_constant(
+        template = template.standardize(skip_static_zero=False)
+        bgd_constant_for_template = self._strip_constant_zero_sides_for_template(
             bgd_constant,
-            template.standardize(skip_static_zero=False),
+            template,
+        )
+        template = self._close_template_frame_for_constant(
+            bgd_constant_for_template,
+            template,
+        ).standardize(skip_static_zero=False)
+        bgd_constant_for_template = self._strip_constant_zero_sides_for_template(
+            bgd_constant,
+            template,
+        )
+        template = self._close_template_shape_for_constant(
+            bgd_constant_for_template,
+            template,
         ).standardize(skip_static_zero=False).align_center_subdivisions()
         self._print_bgd_template_shape_summary(template, name_prefix)
         bgd_expr = self._fresh_bgd_template(template, name_prefix, envs)
         envs.constraints_list += self._bgd_nonnegative_constraints(bgd_expr)
-        constant_aligned = bgd_constant.align_frame(
+        bgd_constant_for_template = self._strip_constant_zero_sides_for_template(
+            bgd_constant,
+            template,
+        )
+        constant_aligned = bgd_constant_for_template.align_frame(
             bgd_expr.center_lefts,
             bgd_expr.center_rights,
             bgd_expr.left_lengths,
@@ -281,6 +299,66 @@ class Adapter(ABC):
             bgd_expr,
         )
         return bgd_expr, envs
+
+    @staticmethod
+    def _bgd_side_is_static_zero(bgd: BGD, dim: int, side: int) -> bool:
+        for index in np.ndindex(bgd.E.shape):
+            if index[dim] == side and not _array_is_static_zero(bgd.E[index].P):
+                return False
+        return True
+
+    def _strip_constant_zero_sides_for_template(
+        self,
+        bgd_constant: BGD,
+        template: BGD,
+    ) -> BGD:
+        result = bgd_constant
+        for dim in range(template.ndim):
+            if template.left_lengths[dim] == 0 and result.left_lengths[dim] > 0:
+                if not self._bgd_side_is_static_zero(result, dim, 0):
+                    raise ValueError(
+                        f"template has no left period in dimension {dim}, "
+                        "but the constant distribution has nonzero left mass"
+                    )
+                result = result.restrict(dim, ">=", template.center_lefts[dim])
+            if template.right_lengths[dim] == 0 and result.right_lengths[dim] > 0:
+                if not self._bgd_side_is_static_zero(result, dim, 2):
+                    raise ValueError(
+                        f"template has no right period in dimension {dim}, "
+                        "but the constant distribution has nonzero right mass"
+                    )
+                result = result.restrict(dim, "<=", template.center_rights[dim])
+        return result
+
+    def _close_template_shape_for_constant(
+        self,
+        bgd_constant: BGD,
+        template: BGD,
+    ) -> BGD:
+        constant_aligned = bgd_constant.align_frame(
+            template.center_lefts,
+            template.center_rights,
+            template.left_lengths,
+            template.right_lengths,
+        ).standardize(skip_static_zero=False)
+        template = template.standardize(skip_static_zero=False)
+
+        E_shape = np.empty(template.E.shape, dtype=object)
+        for edge_index in np.ndindex(template.E.shape):
+            template_mud = template.E[edge_index]
+            constant_mud = constant_aligned.E[edge_index]
+            target_S = tuple(
+                template_mud.S[dim]
+                if template_mud.S[dim] == constant_mud.S[dim]
+                else self._merge_mud_breakpoints(
+                    template_mud.S[dim],
+                    constant_mud.S[dim],
+                )
+                for dim in range(template.ndim)
+            )
+            E_shape[edge_index] = template_mud.align(target_S)
+
+        return BGD(E_shape, template.alpha, template.beta)
 
     def _close_template_frame_for_constant(self, bgd_constant: BGD, template: BGD) -> BGD:
         result = template

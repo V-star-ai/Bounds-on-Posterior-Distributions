@@ -21,6 +21,7 @@
     }
   },
   "template": {
+    "loop_unroll_iterations": 1,
     "dirac_iterations": 2,
     "uniform_convolution_max_interval": 0.2
   },

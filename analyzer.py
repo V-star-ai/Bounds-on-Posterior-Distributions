@@ -45,6 +45,7 @@ class ProgramStructure:
         center_subdivision=None,
         block_subdivision=None,
         template_dirac_iterations=2,
+        loop_unroll_iterations=1,
         uniform_convolution_max_interval=Fraction(1, 2),
         loop_template_visualization=None,
     ):
@@ -53,6 +54,7 @@ class ProgramStructure:
         self.center_subdivision = center_subdivision
         self.block_subdivision = block_subdivision
         self.template_dirac_iterations = template_dirac_iterations
+        self.loop_unroll_iterations = loop_unroll_iterations
         self.uniform_convolution_max_interval = (
             None
             if uniform_convolution_max_interval is None
@@ -461,14 +463,18 @@ class ProgramStructure:
             else:
                 right = None
                 right_probe = None
-            if right is not None and right > result.center_rights[dim]:
+            if right is not None:
                 old_right = result.center_rights[dim]
-                result = result.restrict(dim, "<=", right)
-                points = cls._global_breakpoints_for_dim(
-                    right_probe, dim, old_right, right
-                )
-                points = {point for point in points if old_right < point <= right}
-                result = cls._add_center_axis_breakpoints(result, dim, points)
+                threshold = max(right, old_right)
+                result = result.restrict(dim, "<=", threshold)
+                if threshold > old_right:
+                    points = cls._global_breakpoints_for_dim(
+                        right_probe, dim, old_right, threshold
+                    )
+                    points = {
+                        point for point in points if old_right < point <= threshold
+                    }
+                    result = cls._add_center_axis_breakpoints(result, dim, points)
 
             left_candidates = [
                 (index, probe.center_lefts[dim])
@@ -487,14 +493,18 @@ class ProgramStructure:
             else:
                 left = None
                 left_probe = None
-            if left is not None and left < result.center_lefts[dim]:
+            if left is not None:
                 old_left = result.center_lefts[dim]
-                result = result.restrict(dim, ">=", left)
-                points = cls._global_breakpoints_for_dim(
-                    left_probe, dim, left, old_left
-                )
-                points = {point for point in points if left <= point < old_left}
-                result = cls._add_center_axis_breakpoints(result, dim, points)
+                threshold = min(left, old_left)
+                result = result.restrict(dim, ">=", threshold)
+                if threshold < old_left:
+                    points = cls._global_breakpoints_for_dim(
+                        left_probe, dim, threshold, old_left
+                    )
+                    points = {
+                        point for point in points if threshold <= point < old_left
+                    }
+                    result = cls._add_center_axis_breakpoints(result, dim, points)
 
         return result
 
@@ -759,26 +769,32 @@ class ProgramStructure:
                         result = walk_instr(body_instr, result, solver)
                     return result
 
-                # test
+                # Template shape heuristic: include the entry distribution, the
+                # guarded entry distribution, and a bounded number of concrete
+                # loop unrolls.
                 guarded_bgd = restrict(ctx_bgd)
-                test_bgd = guarded_bgd
-                for body_instr in instr.body:
-                    test_bgd = walk_instr(body_instr, test_bgd, solver)
+                unrolled_bgds = []
+                probe_bgd = ctx_bgd
+                for _ in range(max(0, self.loop_unroll_iterations)):
+                    probe_bgd = run_loop_body_once(probe_bgd)
+                    unrolled_bgds.append(probe_bgd)
 
                 template = self._common_frame_template(
                     ctx_bgd,
                     guarded_bgd,
                     max_fn=self._max_fn(solver),
                 )
-                template = self._common_frame_template(
-                    template,
-                    test_bgd,
-                    max_fn=self._max_fn(solver),
-                )
+                for unrolled_bgd in unrolled_bgds:
+                    template = self._common_frame_template(
+                        template,
+                        unrolled_bgd,
+                        max_fn=self._max_fn(solver),
+                    )
                 template = widen_template_periods(template, instr.body)
-                probe_bgds = [test_bgd]
+                probe_bgds = list(unrolled_bgds)
                 if self.template_dirac_iterations > 0:
-                    probe_bgd = test_bgd
+                    if not probe_bgds:
+                        probe_bgd = guarded_bgd
                     for _ in range(self.template_dirac_iterations):
                         probe_bgd = run_loop_body_once(probe_bgd)
                         probe_bgds.append(probe_bgd)

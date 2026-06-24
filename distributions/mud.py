@@ -693,6 +693,8 @@ class GridMUD:
         for current_dim, seq in enumerate(breakpoints):
             if current_dim == dim:
                 empty_S.append((_as_fraction(point),))
+            elif len(seq) == 1 or seq[0] == seq[-1]:
+                empty_S.append((seq[0],))
             else:
                 empty_S.append((seq[0], seq[-1]))
 
@@ -709,6 +711,8 @@ class GridMUD:
         for current_dim, seq in enumerate(self.S):
             if current_dim == dim:
                 empty_S.append((_as_fraction(point),))
+            elif len(seq) == 1 or seq[0] == seq[-1]:
+                empty_S.append((seq[0],))
             else:
                 empty_S.append((seq[0], seq[-1]))
 

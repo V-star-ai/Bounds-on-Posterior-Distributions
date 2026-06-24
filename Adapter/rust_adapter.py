@@ -358,7 +358,10 @@ class RustAdapter(Adapter):
             "[RustAdapter] "
             f"status={response.get('status')}, "
             f"raw_objective={response.get('objective')}, "
-            f"max_violation={response.get('max_violation')}",
+            f"max_violation={response.get('max_violation')}, "
+            f"worst_constraint={response.get('worst_constraint')}, "
+            f"worst_lhs={response.get('worst_lhs')}, "
+            f"worst_rhs={response.get('worst_rhs')}",
             flush=True,
         )
         if response.get("status") != "solved":
