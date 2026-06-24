@@ -59,6 +59,38 @@ def _default_le_constraint(left, right, name: str):
     return left, "<=", right
 
 
+def _align_mud_dim_to_breakpoints(
+    mud: MUD, dim: int, breakpoints: Sequence[Fraction]
+) -> MUD:
+    target_S = list(mud.S)
+    target_S[dim] = merge_breakpoints(
+        tuple(breakpoints), mud.S[dim], preserve_dirac=True
+    )
+    return mud.align(tuple(target_S))
+
+
+def _local_breakpoints_for_extent(
+    reference: Sequence[Fraction], extent: Fraction
+) -> tuple[Fraction, ...]:
+    if extent < 0:
+        raise ValueError("extent must be nonnegative")
+    if extent == 0:
+        return (Fraction(0),)
+
+    points = {Fraction(0), extent}
+    ref = tuple(sorted(set(reference)))
+    if len(ref) >= 2 and ref[0] == 0 and ref[-1] > 0:
+        period = ref[-1]
+        offset = Fraction(0)
+        while offset < extent:
+            for point in ref:
+                shifted = offset + point
+                if Fraction(0) <= shifted <= extent:
+                    points.add(shifted)
+            offset += period
+    return tuple(sorted(points))
+
+
 def _validate_decay(value, name: str) -> None:
     if _is_static_real(value) and not (0 <= value < 1):
         raise ValueError(f"{name} must satisfy 0 <= {name} < 1")
@@ -207,7 +239,35 @@ class BGD:
             result_E[index] = self.E[index].scale(factor)
         return BGD(result_E, self.alpha, self.beta)
 
-    def standardize(self) -> BGD:
+    def align_center_subdivisions(self) -> BGD:
+        center_index = (1,) * self.ndim
+        result_E = self._copy_E()
+        for index in iter_indices(self.E.shape):
+            if index == center_index:
+                continue
+            direction = self.index_to_direction(index)
+            mud = result_E[index]
+            for dim, value in enumerate(direction):
+                local_center_breakpoints = tuple(
+                    point - self.center_lefts[dim] for point in self.C.S[dim]
+                )
+                if value < 0:
+                    target_breakpoints = _local_breakpoints_for_extent(
+                        local_center_breakpoints, self.left_lengths[dim]
+                    )
+                elif value > 0:
+                    target_breakpoints = _local_breakpoints_for_extent(
+                        local_center_breakpoints, self.right_lengths[dim]
+                    )
+                else:
+                    target_breakpoints = local_center_breakpoints
+                mud = _align_mud_dim_to_breakpoints(
+                    mud, dim, target_breakpoints
+                )
+            result_E[index] = mud
+        return BGD(result_E, self.alpha, self.beta)
+
+    def standardize(self, *, skip_static_zero: bool = True) -> BGD:
         standardized = np.empty(self.E.shape, dtype=object)
         for index in iter_indices(self.E.shape):
             standardized[index] = self.E[index].copy()
@@ -217,9 +277,19 @@ class BGD:
                 direction = self.index_to_direction(index)
                 for dim, value in enumerate(direction):
                     if value < 0:
-                        self._standardize_negative_boundary(standardized, index, dim)
+                        self._standardize_negative_boundary(
+                            standardized,
+                            index,
+                            dim,
+                            skip_static_zero=skip_static_zero,
+                        )
                     elif value > 0:
-                        self._standardize_positive_boundary(standardized, index, dim)
+                        self._standardize_positive_boundary(
+                            standardized,
+                            index,
+                            dim,
+                            skip_static_zero=skip_static_zero,
+                        )
 
         return BGD(standardized, self.alpha, self.beta)
 
@@ -480,6 +550,8 @@ class BGD:
             constraint_factory = _default_le_constraint
 
         left, right = self._align_pair_to_common_frame(other)
+        left = left.standardize(skip_static_zero=False)
+        right = right.standardize(skip_static_zero=False)
         constraints = []
 
         for dim in range(self.ndim):
@@ -928,22 +1000,41 @@ class BGD:
     ) -> np.ndarray:
         result = np.empty(E.shape, dtype=object)
         center_index = (1,) * self.ndim
-        center_length = center_right - center_left
+        center_target_dim = merge_breakpoints(
+            (center_left, center_right),
+            E[center_index].S[dim],
+            preserve_dirac=True,
+        )
+        local_center_target_dim = tuple(
+            point - center_left for point in center_target_dim
+        )
+        left_target_dim = _local_breakpoints_for_extent(
+            local_center_target_dim, left_length
+        )
+        right_target_dim = _local_breakpoints_for_extent(
+            local_center_target_dim, right_length
+        )
 
         for index in iter_indices(E.shape):
             direction = self.index_to_direction(index)
-            if direction[dim] < 0:
-                left, right = Fraction(0), left_length
-            elif direction[dim] > 0:
-                left, right = Fraction(0), right_length
-            elif index == center_index:
-                left, right = center_left, center_right
-            else:
-                left, right = Fraction(0), center_length
             if preserve_empty and E[index].is_empty:
                 result[index] = E[index]
+            elif direction[dim] < 0:
+                result[index] = _align_mud_dim_to_breakpoints(
+                    E[index], dim, left_target_dim
+                )
+            elif direction[dim] > 0:
+                result[index] = _align_mud_dim_to_breakpoints(
+                    E[index], dim, right_target_dim
+                )
+            elif index == center_index:
+                result[index] = _align_mud_dim_to_breakpoints(
+                    E[index], dim, center_target_dim
+                )
             else:
-                result[index] = _align_mud_dim_to_extent(E[index], dim, left, right)
+                result[index] = _align_mud_dim_to_breakpoints(
+                    E[index], dim, local_center_target_dim
+                )
 
         return result
 
@@ -1240,10 +1331,17 @@ class BGD:
         return MUD.empty_like_restrict(self.E[index].S, dim, point)
 
     def _standardize_negative_boundary(
-        self, E: np.ndarray, index: Index, dim: int
+        self,
+        E: np.ndarray,
+        index: Index,
+        dim: int,
+        *,
+        skip_static_zero: bool = True,
     ) -> None:
         boundary = _boundary_slice_mud(E[index], dim, "right")
-        if boundary is None or _array_is_static_zero(boundary.P):
+        if boundary is None:
+            return
+        if skip_static_zero and _array_is_static_zero(boundary.P):
             return
 
         E[index] = _remove_boundary_slice(E[index], dim, "right")
@@ -1265,10 +1363,17 @@ class BGD:
         )
 
     def _standardize_positive_boundary(
-        self, E: np.ndarray, index: Index, dim: int
+        self,
+        E: np.ndarray,
+        index: Index,
+        dim: int,
+        *,
+        skip_static_zero: bool = True,
     ) -> None:
         boundary = _boundary_slice_mud(E[index], dim, "left")
-        if boundary is None or _array_is_static_zero(boundary.P):
+        if boundary is None:
+            return
+        if skip_static_zero and _array_is_static_zero(boundary.P):
             return
 
         E[index] = _remove_boundary_slice(E[index], dim, "left")

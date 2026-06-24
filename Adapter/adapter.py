@@ -204,6 +204,8 @@ class Adapter(ABC):
     def _bgd_le_constraints_same_frame(self, left: BGD, right: BGD) -> list:
         if left.ndim != right.ndim:
             raise ValueError("BGD dimensions do not match")
+        left = left.standardize(skip_static_zero=False)
+        right = right.standardize(skip_static_zero=False)
         if (
             left.center_lefts != right.center_lefts
             or left.center_rights != right.center_rights
@@ -261,7 +263,10 @@ class Adapter(ABC):
             raise ValueError("template and bgd_constant dimensions do not match")
 
         envs = envs or AdapterEnvs({}, [])
-        template = self._close_template_frame_for_constant(bgd_constant, template)
+        template = self._close_template_frame_for_constant(
+            bgd_constant,
+            template.standardize(skip_static_zero=False),
+        ).standardize(skip_static_zero=False).align_center_subdivisions()
         self._print_bgd_template_shape_summary(template, name_prefix)
         bgd_expr = self._fresh_bgd_template(template, name_prefix, envs)
         envs.constraints_list += self._bgd_nonnegative_constraints(bgd_expr)

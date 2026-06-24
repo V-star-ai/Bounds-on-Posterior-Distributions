@@ -46,6 +46,7 @@ class ProgramStructure:
         block_subdivision=None,
         template_dirac_iterations=2,
         uniform_convolution_max_interval=Fraction(1, 2),
+        loop_template_visualization=None,
     ):
         self.prior, self.prog, self.distribution_map = parse_src(prog_str)
         self.mode = mode
@@ -57,6 +58,7 @@ class ProgramStructure:
             if uniform_convolution_max_interval is None
             else Fraction(uniform_convolution_max_interval)
         )
+        self.loop_template_visualization = loop_template_visualization or {}
 
         self.ori_bgd, self.var_order = prior_to_bgd(
             self.prior,
@@ -66,6 +68,66 @@ class ProgramStructure:
         )
         self.var_map = {self.var_order[i] : i for i in range(len(self.var_order))}
         self.ctx_bgd = deepcopy(self.ori_bgd)
+
+    @staticmethod
+    def _shape_only_bgd(template: BGD) -> BGD:
+        E_shape = np.empty(template.E.shape, dtype=object)
+        for edge_index in np.ndindex(template.E.shape):
+            mud = template.E[edge_index]
+            P = np.empty(mud.shape, dtype=object)
+            P.fill(Fraction(1))
+            E_shape[edge_index] = type(mud)(mud.S, P)
+        return BGD(E_shape, [Fraction(1, 2)] * template.ndim, [Fraction(1, 2)] * template.ndim)
+
+    @staticmethod
+    def _template_visualization_specs(bgd: BGD, num: int):
+        if bgd.ndim == 1:
+            return [("var", {"num": num})]
+
+        specs = []
+        for dim in range(bgd.ndim):
+            if dim < 2:
+                specs.append(("var", {"num": num}))
+            else:
+                specs.append(("const", bgd.center_lefts[dim]))
+        return specs
+
+    def _maybe_visualize_loop_template(self, template: BGD, loop_index: int) -> None:
+        config = self.loop_template_visualization
+        if not config or not config.get("enabled", False):
+            return
+
+        from visualize_bgd import plot_bgd
+
+        shape_bgd = self._shape_only_bgd(template)
+        num = int(config.get("num", 160))
+        fallback_html = config.get(
+            "fallback_html",
+            f"bgd_loop_template_w{loop_index}.html",
+        )
+        output_html = config.get("output_html")
+        if isinstance(output_html, str):
+            output_html = output_html.format(loop=loop_index)
+        if isinstance(fallback_html, str):
+            fallback_html = fallback_html.format(loop=loop_index)
+
+        print(
+            f"[BGD template visualization] loop=w{loop_index}, "
+            f"show={bool(config.get('show', True))}, "
+            f"output={output_html}, fallback={fallback_html}",
+            flush=True,
+        )
+        plot_bgd(
+            shape_bgd,
+            self._template_visualization_specs(shape_bgd, num),
+            mode=config.get("mode", "heatmap"),
+            value=config.get("value", "cell_mass"),
+            tail_blocks=int(config.get("tail_blocks", 2)),
+            show_internal_grid=bool(config.get("show_internal_grid", True)),
+            fallback_html=fallback_html,
+            output_html=output_html,
+            show=bool(config.get("show", True)),
+        )
 
     def _distribution_spec_to_bgd(self, dist_spec) -> BGD:
         dist_name, params = dist_spec
@@ -296,6 +358,145 @@ class ProgramStructure:
                 result_E[index] = mud.align(tuple(target_S))
 
         return BGD(result_E, template.alpha, template.beta)
+
+    @staticmethod
+    def _global_breakpoints_for_dim(
+        bgd: BGD, dim: int, low: Fraction, high: Fraction
+    ) -> set[Fraction]:
+        points = set()
+        if low > high:
+            return points
+
+        center_index = (1,) * bgd.ndim
+        for index in product(range(3), repeat=bgd.ndim):
+            mud = bgd.E[index]
+            direction = bgd.index_to_direction(index)
+            axis_direction = direction[dim]
+            local_points = mud.S[dim]
+
+            if index == center_index:
+                offsets = [Fraction(0)]
+            elif axis_direction < 0:
+                length = bgd.left_lengths[dim]
+                if length <= 0:
+                    continue
+                offsets = []
+                block = -1
+                while True:
+                    offset = bgd.center_lefts[dim] + block * length
+                    if offset + length < low:
+                        break
+                    offsets.append(offset)
+                    block -= 1
+            elif axis_direction > 0:
+                length = bgd.right_lengths[dim]
+                if length <= 0:
+                    continue
+                offsets = []
+                block = 1
+                while True:
+                    offset = bgd.center_rights[dim] + (block - 1) * length
+                    if offset > high:
+                        break
+                    offsets.append(offset)
+                    block += 1
+            else:
+                offsets = [bgd.center_lefts[dim]]
+
+            for offset in offsets:
+                for point in local_points:
+                    global_point = offset + point
+                    if low <= global_point <= high:
+                        points.add(global_point)
+
+        return points
+
+    @staticmethod
+    def _add_center_axis_breakpoints(
+        bgd: BGD, dim: int, points: set[Fraction]
+    ) -> BGD:
+        points = {
+            point
+            for point in points
+            if bgd.center_lefts[dim] <= point <= bgd.center_rights[dim]
+        }
+        if not points:
+            return bgd
+
+        result_E = bgd._copy_E()
+        center_index = (1,) * bgd.ndim
+        center = result_E[center_index]
+        target_S = list(center.S)
+        target_S[dim] = merge_breakpoints(
+            target_S[dim],
+            tuple(sorted(points)),
+            preserve_dirac=True,
+        )
+        result_E[center_index] = center.align(tuple(target_S))
+        return BGD(result_E, bgd.alpha, bgd.beta)
+
+    @classmethod
+    def _apply_stable_probe_boundaries(
+        cls, template: BGD, probes: list[BGD]
+    ) -> BGD:
+        if len(probes) < 2:
+            return template
+
+        result = template
+        for dim in range(template.ndim):
+            right_candidates = [
+                (index, probe.center_rights[dim])
+                for index, probe in enumerate(probes[:-1])
+                if all(
+                    later.center_rights[dim] <= probe.center_rights[dim]
+                    for later in probes[index + 1 :]
+                )
+            ]
+            if right_candidates:
+                right_index, right = min(
+                    right_candidates,
+                    key=lambda item: item[1],
+                )
+                right_probe = probes[right_index]
+            else:
+                right = None
+                right_probe = None
+            if right is not None and right > result.center_rights[dim]:
+                old_right = result.center_rights[dim]
+                result = result.restrict(dim, "<=", right)
+                points = cls._global_breakpoints_for_dim(
+                    right_probe, dim, old_right, right
+                )
+                points = {point for point in points if old_right < point <= right}
+                result = cls._add_center_axis_breakpoints(result, dim, points)
+
+            left_candidates = [
+                (index, probe.center_lefts[dim])
+                for index, probe in enumerate(probes[:-1])
+                if all(
+                    later.center_lefts[dim] >= probe.center_lefts[dim]
+                    for later in probes[index + 1 :]
+                )
+            ]
+            if left_candidates:
+                left_index, left = max(
+                    left_candidates,
+                    key=lambda item: item[1],
+                )
+                left_probe = probes[left_index]
+            else:
+                left = None
+                left_probe = None
+            if left is not None and left < result.center_lefts[dim]:
+                old_left = result.center_lefts[dim]
+                result = result.restrict(dim, ">=", left)
+                points = cls._global_breakpoints_for_dim(
+                    left_probe, dim, left, old_left
+                )
+                points = {point for point in points if left <= point < old_left}
+                result = cls._add_center_axis_breakpoints(result, dim, points)
+
+        return result
 
     def solve_bgd(self, adapter : Adapter = None, method="Park"): # method = "Park" | "Diabolo"
         """
@@ -559,19 +760,37 @@ class ProgramStructure:
                     return result
 
                 # test
-                test_bgd = run_loop_body_once(ctx_bgd)
+                guarded_bgd = restrict(ctx_bgd)
+                test_bgd = guarded_bgd
+                for body_instr in instr.body:
+                    test_bgd = walk_instr(body_instr, test_bgd, solver)
 
                 template = self._common_frame_template(
                     ctx_bgd,
+                    guarded_bgd,
+                    max_fn=self._max_fn(solver),
+                )
+                template = self._common_frame_template(
+                    template,
                     test_bgd,
                     max_fn=self._max_fn(solver),
                 )
                 template = widen_template_periods(template, instr.body)
+                probe_bgds = [test_bgd]
                 if self.template_dirac_iterations > 0:
                     probe_bgd = test_bgd
                     for _ in range(self.template_dirac_iterations):
                         probe_bgd = run_loop_body_once(probe_bgd)
+                        probe_bgds.append(probe_bgd)
+                    template = self._apply_stable_probe_boundaries(
+                        template,
+                        probe_bgds,
+                    )
                     template = self._add_probe_diracs_to_template(template, probe_bgd)
+                template = template.standardize(
+                    skip_static_zero=False
+                ).align_center_subdivisions()
+                self._maybe_visualize_loop_template(template, self_while_counter)
 
                 # solve
                 if method == "Park":

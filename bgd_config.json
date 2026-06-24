@@ -8,14 +8,24 @@
     "mode": "surface",
     "value": "density",
     "fallback_html": "bgd_visualization.html",
-    "show": true
+    "show": true,
+    "loop_template": {
+      "enabled": true,
+      "num": 160,
+      "mode": "heatmap",
+      "value": "cell_mass",
+      "tail_blocks": 2,
+      "show_internal_grid": true,
+      "fallback_html": "bgd_loop_template_w{loop}.html",
+      "show": true
+    }
   },
   "template": {
     "dirac_iterations": 2,
-    "uniform_convolution_max_interval": 0.5
+    "uniform_convolution_max_interval": 0.2
   },
   "solver": {
-    "name": "ipopt",
+    "name": "rust",
     "ipopt": {
       "max_iter": 500,
       "tol": 1e-6,
@@ -25,6 +35,18 @@
       "print_level": 0,
       "compile_expr": true,
       "profile": true
+    },
+    "rust": {
+      "diabolo_dir": "diabolo",
+      "bin_name": "solve_json",
+      "release": false,
+      "max_iter": 500,
+      "tol": 1e-6,
+      "constraint_eps": 1e-8,
+      "constraint_margin": 0.0,
+      "verbose": false,
+      "preprocess": false,
+      "save_problem": null
     }
   }
 }

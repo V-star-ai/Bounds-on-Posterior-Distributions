@@ -214,6 +214,36 @@ def _block_coord_for_axis(bgd: BGD, axis: int, x: Fraction) -> Optional[int]:
     return _floor_fraction((x - center_right) / length) + 1
 
 
+def _block_coord_candidates_for_axis(bgd: BGD, axis: int, x: Fraction) -> list[int]:
+    candidates = set()
+    primary = _block_coord_for_axis(bgd, axis, x)
+    if primary is not None:
+        candidates.add(primary)
+
+    center_left = bgd.center_lefts[axis]
+    center_right = bgd.center_rights[axis]
+    if x == center_left and bgd.left_lengths[axis] > 0:
+        candidates.add(-1)
+    if x == center_right and bgd.right_lengths[axis] > 0:
+        candidates.add(1)
+
+    if x < center_left and bgd.left_lengths[axis] > 0:
+        distance = center_left - x
+        if distance % bgd.left_lengths[axis] == 0:
+            q = distance // bgd.left_lengths[axis]
+            candidates.add(-q)
+            candidates.add(-(q + 1))
+
+    if x > center_right and bgd.right_lengths[axis] > 0:
+        distance = x - center_right
+        if distance % bgd.right_lengths[axis] == 0:
+            q = distance // bgd.right_lengths[axis]
+            candidates.add(q)
+            candidates.add(q + 1)
+
+    return sorted(candidates)
+
+
 def _floor_fraction(value: Fraction) -> int:
     return value.numerator // value.denominator
 
@@ -287,22 +317,25 @@ def _eval_bgd_at(bgd: BGD, x: Sequence[float], *, value: str) -> float:
         raise ValueError("Point dimension does not match BGD")
 
     point = tuple(_to_fraction(v) for v in x)
-    block_coord = []
+    coord_candidates = []
     for axis, axis_value in enumerate(point):
-        coord = _block_coord_for_axis(bgd, axis, axis_value)
-        if coord is None:
+        candidates = _block_coord_candidates_for_axis(bgd, axis, axis_value)
+        if not candidates:
             return 0.0
-        block_coord.append(coord)
+        coord_candidates.append(candidates)
 
-    block = bgd.block_at(tuple(block_coord))
-    if all(coord == 0 for coord in block_coord):
-        local_x = point
-    else:
-        local_x = tuple(
-            point[axis] - block.translation[axis] for axis in range(bgd.ndim)
-        )
-    base = _eval_mud_at(block.distribution, local_x, value=value)
-    return base * _to_float(block.decay_factor, "BGD decay factor")
+    total = 0.0
+    for block_coord in product(*coord_candidates):
+        block = bgd.block_at(tuple(block_coord))
+        if all(coord == 0 for coord in block_coord):
+            local_x = point
+        else:
+            local_x = tuple(
+                point[axis] - block.translation[axis] for axis in range(bgd.ndim)
+            )
+        base = _eval_mud_at(block.distribution, local_x, value=value)
+        total += base * _to_float(block.decay_factor, "BGD decay factor")
+    return total
 
 
 def _fixed_point_from_specs(parsed: Sequence[_Spec], enum_axes, combo, ndim: int):
@@ -315,41 +348,227 @@ def _fixed_point_from_specs(parsed: Sequence[_Spec], enum_axes, combo, ndim: int
     return x
 
 
-def _axis_boundaries(bgd: BGD, axis: int, *, tail_blocks: int) -> list[float]:
+def _axis_boundary_points(bgd: BGD, axis: int, *, tail_blocks: int) -> list[Fraction]:
     values = [bgd.center_lefts[axis], bgd.center_rights[axis]]
     for block in range(1, tail_blocks + 1):
         if bgd.left_lengths[axis] > 0:
             values.append(bgd.center_lefts[axis] - block * bgd.left_lengths[axis])
         if bgd.right_lengths[axis] > 0:
             values.append(bgd.center_rights[axis] + block * bgd.right_lengths[axis])
-    return sorted(float(value) for value in values)
+    return sorted(values)
 
 
-def _add_1d_boundaries(fig, bgd: BGD, axis: int, *, tail_blocks: int):
+def _axis_boundaries(bgd: BGD, axis: int, *, tail_blocks: int) -> list[float]:
+    return [
+        float(value)
+        for value in _axis_boundary_points(bgd, axis, tail_blocks=tail_blocks)
+    ]
+
+
+
+
+def _axis_translations_for_edge(
+    bgd: BGD,
+    edge_index,
+    axis: int,
+    *,
+    tail_blocks: int,
+) -> list[Fraction]:
+    direction = bgd.index_to_direction(edge_index)
+    if direction[axis] < 0:
+        length = bgd.left_lengths[axis]
+        if length <= 0:
+            return []
+        return [
+            bgd.center_lefts[axis] - block_number * length
+            for block_number in range(1, tail_blocks + 1)
+        ]
+    if direction[axis] > 0:
+        length = bgd.right_lengths[axis]
+        if length <= 0:
+            return []
+        return [
+            bgd.center_rights[axis] + (block_number - 1) * length
+            for block_number in range(1, tail_blocks + 1)
+        ]
+    if edge_index == (1,) * bgd.ndim:
+        return [Fraction(0)]
+    return [bgd.center_lefts[axis]]
+
+
+def _dirac_side(points: Sequence[Fraction], index: int) -> str:
+    point = points[index]
+    if index > 0 and points[index - 1] < point:
+        return "left"
+    if index + 2 < len(points) and point < points[index + 2]:
+        return "right"
+    if index == 0:
+        return "right"
+    return "left"
+
+
+def _axis_structure_lines(
+    bgd: BGD,
+    axis: int,
+    *,
+    tail_blocks: int,
+) -> tuple[set[Fraction], set[Fraction], list[tuple[Fraction, str]]]:
+    xmin, xmax = _axis_plot_range(bgd, axis, tail_blocks=tail_blocks)
+    big_lines = set(_axis_boundary_points(bgd, axis, tail_blocks=tail_blocks))
+    small_lines = set()
+    dirac_lines = []
+
+    for edge_index in np.ndindex(bgd.E.shape):
+        mud = bgd.E[edge_index]
+        local_points = mud.S[axis]
+        translations = _axis_translations_for_edge(
+            bgd,
+            edge_index,
+            axis,
+            tail_blocks=tail_blocks,
+        )
+        for translation in translations:
+            for point in local_points[1:-1]:
+                global_point = translation + point
+                if xmin <= global_point <= xmax:
+                    small_lines.add(global_point)
+            for index, (left, right) in enumerate(zip(local_points, local_points[1:])):
+                if left != right:
+                    continue
+                global_point = translation + left
+                if xmin <= global_point <= xmax:
+                    dirac_lines.append((global_point, _dirac_side(local_points, index)))
+
+    return big_lines, small_lines, dirac_lines
+
+
+def _axis_line_offset(
+    bgd: BGD,
+    axis: int,
+    *,
+    tail_blocks: int,
+) -> Fraction:
+    xmin, xmax = _axis_plot_range(bgd, axis, tail_blocks=tail_blocks)
+    span = xmax - xmin
+    if span <= 0:
+        return Fraction(1, 1000)
+    return span / 1000
+
+
+def _offset_dirac_line(
+    value: Fraction,
+    side: str,
+    *,
+    offset: Fraction,
+    occupied: set[Fraction],
+) -> Fraction:
+    if value not in occupied:
+        return value
+    if side == "left":
+        return value - offset
+    return value + offset
+
+
+def _add_vline(fig, value, *, color: str, width: float, dash: str):
+    fig.add_vline(
+        x=float(value),
+        line_width=width,
+        line_dash=dash,
+        line_color=color,
+    )
+
+
+def _add_hline(fig, value, *, color: str, width: float, dash: str):
+    fig.add_hline(
+        y=float(value),
+        line_width=width,
+        line_dash=dash,
+        line_color=color,
+    )
+
+
+def _axis_plot_range(bgd: BGD, axis: int, *, tail_blocks: int) -> tuple[Fraction, Fraction]:
+    return (
+        bgd.center_lefts[axis] - bgd.left_lengths[axis] * tail_blocks,
+        bgd.center_rights[axis] + bgd.right_lengths[axis] * tail_blocks,
+    )
+
+
+def _add_1d_boundaries(
+    fig,
+    bgd: BGD,
+    axis: int,
+    *,
+    tail_blocks: int,
+    show_internal_grid: bool,
+):
+    if show_internal_grid:
+        big_lines, small_lines, dirac_lines = _axis_structure_lines(
+            bgd,
+            axis,
+            tail_blocks=tail_blocks,
+        )
+        occupied = big_lines | small_lines
+        offset = _axis_line_offset(bgd, axis, tail_blocks=tail_blocks)
+        for value in sorted(small_lines):
+            _add_vline(fig, value, color="rgba(0,150,70,0.70)", width=0.8, dash="solid")
+        for value in sorted(big_lines):
+            _add_vline(fig, value, color="rgba(210,30,30,0.85)", width=1.6, dash="solid")
+        for value, side in dirac_lines:
+            value = _offset_dirac_line(value, side, offset=offset, occupied=occupied)
+            _add_vline(fig, value, color="rgba(40,90,230,0.90)", width=1.2, dash="solid")
+
     for value in _axis_boundaries(bgd, axis, tail_blocks=tail_blocks):
-        fig.add_vline(
-            x=value,
-            line_width=1,
-            line_dash="dot",
-            line_color="rgba(60,60,60,0.45)",
+        if not show_internal_grid:
+            _add_vline(fig, value, color="rgba(60,60,60,0.45)", width=1, dash="dot")
+
+
+def _add_2d_heatmap_boundaries(
+    fig,
+    bgd: BGD,
+    ax0: int,
+    ax1: int,
+    *,
+    tail_blocks: int,
+    show_internal_grid: bool,
+):
+    if show_internal_grid:
+        x_big, x_small, x_dirac = _axis_structure_lines(
+            bgd,
+            ax0,
+            tail_blocks=tail_blocks,
         )
+        y_big, y_small, y_dirac = _axis_structure_lines(
+            bgd,
+            ax1,
+            tail_blocks=tail_blocks,
+        )
+        x_occupied = x_big | x_small
+        y_occupied = y_big | y_small
+        x_offset = _axis_line_offset(bgd, ax0, tail_blocks=tail_blocks)
+        y_offset = _axis_line_offset(bgd, ax1, tail_blocks=tail_blocks)
 
+        for value in sorted(x_small):
+            _add_vline(fig, value, color="rgba(0,150,70,0.70)", width=0.8, dash="solid")
+        for value in sorted(y_small):
+            _add_hline(fig, value, color="rgba(0,150,70,0.70)", width=0.8, dash="solid")
+        for value in sorted(x_big):
+            _add_vline(fig, value, color="rgba(210,30,30,0.85)", width=1.6, dash="solid")
+        for value in sorted(y_big):
+            _add_hline(fig, value, color="rgba(210,30,30,0.85)", width=1.6, dash="solid")
+        for value, side in x_dirac:
+            value = _offset_dirac_line(value, side, offset=x_offset, occupied=x_occupied)
+            _add_vline(fig, value, color="rgba(40,90,230,0.90)", width=1.2, dash="solid")
+        for value, side in y_dirac:
+            value = _offset_dirac_line(value, side, offset=y_offset, occupied=y_occupied)
+            _add_hline(fig, value, color="rgba(40,90,230,0.90)", width=1.2, dash="solid")
 
-def _add_2d_heatmap_boundaries(fig, bgd: BGD, ax0: int, ax1: int, *, tail_blocks: int):
     for value in _axis_boundaries(bgd, ax0, tail_blocks=tail_blocks):
-        fig.add_vline(
-            x=value,
-            line_width=1,
-            line_dash="dot",
-            line_color="rgba(60,60,60,0.45)",
-        )
+        if not show_internal_grid:
+            _add_vline(fig, value, color="rgba(60,60,60,0.45)", width=1, dash="dot")
     for value in _axis_boundaries(bgd, ax1, tail_blocks=tail_blocks):
-        fig.add_hline(
-            y=value,
-            line_width=1,
-            line_dash="dot",
-            line_color="rgba(60,60,60,0.45)",
-        )
+        if not show_internal_grid:
+            _add_hline(fig, value, color="rgba(60,60,60,0.45)", width=1, dash="dot")
 
 
 def plot_bgd(
@@ -360,6 +579,7 @@ def plot_bgd(
     value: str = "density",
     tail_blocks: int = 2,
     show_blocks: bool = True,
+    show_internal_grid: bool = False,
     output_html: str | Path | None = None,
     fallback_html: str | Path | None = None,
     show: bool = True,
@@ -435,7 +655,13 @@ def plot_bgd(
             trace_mode = "lines+markers" if len(xs) <= 2 else "lines"
             fig.add_trace(go.Scatter(x=xs, y=ys, mode=trace_mode, name=label))
         if show_blocks:
-            _add_1d_boundaries(fig, bgd, axis, tail_blocks=tail_blocks)
+            _add_1d_boundaries(
+                fig,
+                bgd,
+                axis,
+                tail_blocks=tail_blocks,
+                show_internal_grid=show_internal_grid,
+            )
         fig.update_layout(
             title="BGD",
             xaxis_title=f"axis {axis}",
@@ -548,7 +774,14 @@ def plot_bgd(
         )
     else:
         if show_blocks:
-            _add_2d_heatmap_boundaries(fig, bgd, ax0, ax1, tail_blocks=tail_blocks)
+            _add_2d_heatmap_boundaries(
+                fig,
+                bgd,
+                ax0,
+                ax1,
+                tail_blocks=tail_blocks,
+                show_internal_grid=show_internal_grid,
+            )
         fig.update_layout(
             title=titles[0],
             xaxis_title=f"axis {ax0}",

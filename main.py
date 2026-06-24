@@ -4,6 +4,7 @@ from pathlib import Path
 
 from analyzer import ProgramStructure
 from Adapter.ipopt_adapter import IpoptAdapter
+from Adapter.rust_adapter import RustAdapter
 from Adapter.z3_adapter import Z3Adapter
 from visualize_bgd import plot_bgd
 
@@ -70,12 +71,27 @@ def get_prior_approximation_config(config):
 
 def get_visualization_config(config):
     visualization = config.get("visualization", {})
+    loop_template = visualization.get("loop_template", {})
     return {
         "num": visualization.get("num", 160),
         "mode": visualization.get("mode", "surface"),
         "value": visualization.get("value", "density"),
         "fallback_html": visualization.get("fallback_html", "bgd_visualization.html"),
         "show": visualization.get("show", True),
+        "loop_template": {
+            "enabled": bool(loop_template.get("enabled", False)),
+            "num": int(loop_template.get("num", visualization.get("num", 160))),
+            "mode": loop_template.get("mode", "heatmap"),
+            "value": loop_template.get("value", "cell_mass"),
+            "tail_blocks": int(loop_template.get("tail_blocks", 2)),
+            "show_internal_grid": bool(loop_template.get("show_internal_grid", True)),
+            "fallback_html": loop_template.get(
+                "fallback_html",
+                "bgd_loop_template_w{loop}.html",
+            ),
+            "output_html": loop_template.get("output_html"),
+            "show": bool(loop_template.get("show", visualization.get("show", True))),
+        },
     }
 
 
@@ -93,6 +109,7 @@ def get_template_config(config):
 def get_solver_config(config):
     solver = config.get("solver", {})
     ipopt = solver.get("ipopt", {})
+    rust = solver.get("rust", {})
     return {
         "name": solver.get("name", "ipopt"),
         "ipopt": {
@@ -105,6 +122,20 @@ def get_solver_config(config):
             "compile_expr": bool(ipopt.get("compile_expr", True)),
             "profile": bool(ipopt.get("profile", True)),
         },
+        "rust": {
+            "diabolo_dir": rust.get("diabolo_dir", "diabolo"),
+            "bin_name": rust.get("bin_name", "solve_json"),
+            "release": bool(rust.get("release", False)),
+            "max_iter": int(rust.get("max_iter", ipopt.get("max_iter", 500))),
+            "tol": float(rust.get("tol", ipopt.get("tol", 1e-6))),
+            "constraint_eps": float(
+                rust.get("constraint_eps", ipopt.get("constraint_eps", 1e-8))
+            ),
+            "constraint_margin": float(rust.get("constraint_margin", 0.0)),
+            "verbose": bool(rust.get("verbose", False)),
+            "preprocess": bool(rust.get("preprocess", False)),
+            "save_problem": rust.get("save_problem"),
+        },
     }
 
 
@@ -112,6 +143,8 @@ def build_solver(config):
     name = config["name"].lower()
     if name == "ipopt":
         return IpoptAdapter(**config["ipopt"])
+    if name in ("rust", "diabolo"):
+        return RustAdapter(**config["rust"])
     if name == "z3":
         return Z3Adapter()
     raise ValueError(f"Unknown solver: {config['name']}")
@@ -145,7 +178,7 @@ def main():
     parser.add_argument(
         "--program",
         "-p",
-        default="./benchmarks/PLDI22/exfig6.txt",
+        default="./benchmarks/PLDI22/cavex5.txt",
         help="Program source file containing prior: and program: sections",
     )
     args = parser.parse_args()
@@ -164,6 +197,7 @@ def main():
         uniform_convolution_max_interval=template_config[
             "uniform_convolution_max_interval"
         ],
+        loop_template_visualization=visualization_config["loop_template"],
     )
     print(prog.prog)
     print("ori center S: ", prog.ori_bgd.C.S)
@@ -172,6 +206,7 @@ def main():
     print(result.C.P)
     print(result.alpha)
     print(result.beta)
+    print(f"mass: {result.mass()}")
 
     plot_bgd(
         result,
