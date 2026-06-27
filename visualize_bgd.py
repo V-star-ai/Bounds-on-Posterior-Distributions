@@ -276,15 +276,15 @@ def _payload_at(payload, interval: tuple[Fraction, Fraction], point: Fraction):
     return payload
 
 
-def _eval_mud_at(mud, local_x: Sequence[Fraction], *, value: str):
+def _eval_mud_at_with_intervals(mud, local_x: Sequence[Fraction], *, value: str):
     if mud.is_empty:
-        return 0.0
+        return 0.0, None
 
     index = []
     for axis, x in enumerate(local_x):
         cell_index = _cell_index_for_point(mud.S[axis], x)
         if cell_index is None:
-            return 0.0
+            return 0.0, None
         index.append(cell_index)
     index_tuple = tuple(index)
 
@@ -300,7 +300,7 @@ def _eval_mud_at(mud, local_x: Sequence[Fraction], *, value: str):
         )
 
     if value == "cell_mass":
-        return _to_float(payload, "cell payload")
+        return _to_float(payload, "cell payload"), intervals
     if value != "density":
         raise ValueError("value must be 'density' or 'cell_mass'")
 
@@ -309,7 +309,12 @@ def _eval_mud_at(mud, local_x: Sequence[Fraction], *, value: str):
         length = right - left
         if length > 0:
             volume *= length
-    return _to_float(payload / volume, "cell density")
+    return _to_float(payload / volume, "cell density"), intervals
+
+
+def _eval_mud_at(mud, local_x: Sequence[Fraction], *, value: str):
+    result, _intervals = _eval_mud_at_with_intervals(mud, local_x, value=value)
+    return result
 
 
 def _eval_bgd_at(bgd: BGD, x: Sequence[float], *, value: str) -> float:
@@ -318,7 +323,10 @@ def _eval_bgd_at(bgd: BGD, x: Sequence[float], *, value: str) -> float:
 
     point = tuple(_to_fraction(v) for v in x)
     coord_candidates = []
+    primary_coord = []
     for axis, axis_value in enumerate(point):
+        primary = _block_coord_for_axis(bgd, axis, axis_value)
+        primary_coord.append(primary)
         candidates = _block_coord_candidates_for_axis(bgd, axis, axis_value)
         if not candidates:
             return 0.0
@@ -333,7 +341,19 @@ def _eval_bgd_at(bgd: BGD, x: Sequence[float], *, value: str) -> float:
             local_x = tuple(
                 point[axis] - block.translation[axis] for axis in range(bgd.ndim)
             )
-        base = _eval_mud_at(block.distribution, local_x, value=value)
+        base, intervals = _eval_mud_at_with_intervals(
+            block.distribution,
+            local_x,
+            value=value,
+        )
+        if intervals is None:
+            continue
+        if any(
+            coord != primary_coord[axis]
+            and intervals[axis][0] != intervals[axis][1]
+            for axis, coord in enumerate(block_coord)
+        ):
+            continue
         total += base * _to_float(block.decay_factor, "BGD decay factor")
     return total
 

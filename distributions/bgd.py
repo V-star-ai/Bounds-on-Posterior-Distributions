@@ -763,6 +763,7 @@ class BGD:
 
             if target_index != (1,) * self.ndim:
                 piece = _shift_grid_dim(piece, dim, -target_left)
+            piece = self._convert_piece_to_target_coords(piece, dim, target_index)
             accumulated = accumulated + piece
 
         return accumulated.to_mass_mud_upper(
@@ -897,8 +898,20 @@ class BGD:
 
     def _align_center_left(self, dim: int, left: Fraction) -> BGD:
         if self.left_lengths[dim] == 0:
+            result = self._copy_E()
+            local_shift = self.center_lefts[dim] - left
+            if local_shift != 0:
+                center_index = (1,) * self.ndim
+                for index in iter_indices(result.shape):
+                    direction = self.index_to_direction(index)
+                    if direction[dim] == 0 and index != center_index:
+                        result[index] = _shift_mud_dim(
+                            result[index],
+                            dim,
+                            local_shift,
+                        )
             result = self._force_frame_dim(
-                self._copy_E(),
+                result,
                 dim,
                 left,
                 self.center_rights[dim],
@@ -1415,7 +1428,7 @@ class BGD:
 
             current_left = moved.S[dim][0]
             if current_left != offset:
-                moved = _shift_mud_dim(moved, dim, offset - current_left)
+                moved = _shift_grid_dim(moved, dim, offset - current_left)
 
         return moved
 
