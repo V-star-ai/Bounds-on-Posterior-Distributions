@@ -1,0 +1,11 @@
+prior:
+x := 2;
+
+program:
+while(x >= 0) {
+  if(0.7) {
+    x := x - Uniform(0, 1);
+  } else {
+    x := x + Uniform(0, 1);
+  }
+}
