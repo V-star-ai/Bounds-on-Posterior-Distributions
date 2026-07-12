@@ -1,5 +1,5 @@
 prior:
-    x ~ Uniform(-1, 5.);
+    x ~ Uniform(-1, 5);
 
 program:
     while(x > 0) {
