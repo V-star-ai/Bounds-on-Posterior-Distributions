@@ -1,0 +1,7 @@
+prior:
+    x ~ Normal(5, 2);
+
+program:
+    while(x > 0) {
+        x := x + Normal(-1, 1);
+    }

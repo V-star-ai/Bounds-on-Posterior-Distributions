@@ -1,0 +1,7 @@
+prior:
+    x := 1;
+
+program:
+    while(x > 0) {
+        x := x + Uniform(-3, 2);
+    }

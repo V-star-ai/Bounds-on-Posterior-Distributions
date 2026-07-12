@@ -1,0 +1,11 @@
+prior:
+    stop := 0;
+
+program:
+    while(stop < 1) {
+        if(1/2) {
+            stop := stop + Normal(1, 1);
+        } else {
+            skip;
+        }
+    }
