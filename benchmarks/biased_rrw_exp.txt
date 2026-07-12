@@ -1,0 +1,7 @@
+prior:
+    x := 10;
+
+program:
+    while(x > 0) {
+        x := x - Exponential(1/2);
+    }
