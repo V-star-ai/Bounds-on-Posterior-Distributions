@@ -179,7 +179,7 @@ def main():
     parser.add_argument(
         "--program",
         "-p",
-        default="./benchmarks/PLDI24/pd.txt",
+        default="./benchmarks/PSI/whileloopsum.txt",
         help="Program source file containing prior: and program: sections",
     )
     args = parser.parse_args()

@@ -868,31 +868,48 @@ class GridMUD:
             raise ValueError(f"target_S must contain {self.ndim} dimensions")
         if not _support_is_covered(self.S, target):
             raise ValueError("target_S must cover the source support")
+        if target == self.S:
+            return self.copy()
 
         target_shape = _shape_from_breakpoints(target)
         target_P = np.empty(target_shape, dtype=object)
         target_P.fill(self.ops.zero())
+        overlaps_by_dim = []
+        for dim in range(self.ndim):
+            dim_overlaps = []
+            for interval_index in range(self.shape[dim]):
+                source_left = self.S[dim][interval_index]
+                source_right = self.S[dim][interval_index + 1]
+                overlaps = []
+                for target_index in range(target_shape[dim]):
+                    ratio = _interval_overlap_ratio(
+                        source_left,
+                        source_right,
+                        target[dim],
+                        target_index,
+                    )
+                    if ratio != 0:
+                        overlaps.append((target_index, ratio))
+                dim_overlaps.append(tuple(overlaps))
+            overlaps_by_dim.append(tuple(dim_overlaps))
 
         for source_index in iter_indices(self.shape):
             source_payload = self.P[source_index]
             source_intervals = self._intervals_for_index(source_index)
             per_dim_ratios = []
+            has_overlap = True
             for dim, interval_index in enumerate(source_index):
-                source_left = self.S[dim][interval_index]
-                source_right = self.S[dim][interval_index + 1]
-                ratios = [
-                    _interval_overlap_ratio(source_left, source_right, target[dim], j)
-                    for j in range(target_shape[dim])
-                ]
-                per_dim_ratios.append(ratios)
+                overlaps = overlaps_by_dim[dim][interval_index]
+                if not overlaps:
+                    has_overlap = False
+                    break
+                per_dim_ratios.append(overlaps)
+            if not has_overlap:
+                continue
 
-            for target_index in iter_indices(target_shape):
-                ratio = object_product(
-                    per_dim_ratios[dim][target_index[dim]]
-                    for dim in range(self.ndim)
-                )
-                if ratio == 0:
-                    continue
+            for overlap_tuple in product(*per_dim_ratios):
+                target_index = tuple(item[0] for item in overlap_tuple)
+                ratio = object_product(item[1] for item in overlap_tuple)
                 target_intervals = tuple(
                     (
                         target[dim][target_index[dim]],

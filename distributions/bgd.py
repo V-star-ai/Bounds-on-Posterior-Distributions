@@ -69,6 +69,17 @@ def _align_mud_dim_to_breakpoints(
     return mud.align(tuple(target_S))
 
 
+def _zero_mud_with_dim_extent(
+    mud: MUD, dim: int, left: Fraction, right: Fraction
+) -> MUD:
+    target_S = list(mud.S)
+    target_S[dim] = (left,) if left == right else (left, right)
+    shape = tuple(max(len(points) - 1, 0) for points in target_S)
+    target_P = np.empty(shape, dtype=object)
+    target_P.fill(mud.ops.zero())
+    return mud._new(tuple(target_S), target_P)
+
+
 def _local_breakpoints_for_extent(
     reference: Sequence[Fraction], extent: Fraction
 ) -> tuple[Fraction, ...]:
@@ -1158,7 +1169,12 @@ class BGD:
                 elif direction[dim] > 0:
                     result[index] = self.E[index].copy()
                 elif is_true_center:
-                    result[index] = self.E[index].restrict(dim, op, threshold)
+                    center_piece = self.E[index].restrict(dim, op, threshold)
+                    if center_piece.is_empty:
+                        center_piece = _zero_mud_with_dim_extent(
+                            center_piece, dim, threshold, old_right
+                        )
+                    result[index] = center_piece
                 else:
                     result[index] = _align_mud_dim_to_extent(
                         _shift_mud_dim(
@@ -1177,7 +1193,12 @@ class BGD:
                 elif direction[dim] > 0:
                     result[index] = self._empty_for_index(index, dim, threshold)
                 elif is_true_center:
-                    result[index] = self.E[index].restrict(dim, op, threshold)
+                    center_piece = self.E[index].restrict(dim, op, threshold)
+                    if center_piece.is_empty:
+                        center_piece = _zero_mud_with_dim_extent(
+                            center_piece, dim, old_left, threshold
+                        )
+                    result[index] = center_piece
                 else:
                     result[index] = _align_mud_dim_to_extent(
                         self.E[index].restrict(dim, op, local_threshold),
