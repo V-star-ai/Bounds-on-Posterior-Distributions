@@ -259,7 +259,9 @@ def _interval_overlap_ratio(
     return (right - left) / (source_right - source_left)
 
 
-def _boundary_slice_mud(mud: "MUD", dim: int, side: str) -> "MUD | None":
+def _boundary_slice_mud(
+    mud: "GridMUD", dim: int, side: str
+) -> "GridMUD | None":
     if mud.is_empty:
         return None
 
@@ -283,10 +285,12 @@ def _boundary_slice_mud(mud: "MUD", dim: int, side: str) -> "MUD | None":
 
     boundary_S = list(mud.S)
     boundary_S[dim] = (point, point)
-    return MUD(tuple(boundary_S), boundary_P)
+    return mud._new(tuple(boundary_S), boundary_P)
 
 
-def _remove_boundary_slice(mud: "MUD", dim: int, side: str) -> "MUD":
+def _remove_boundary_slice(
+    mud: "GridMUD", dim: int, side: str
+) -> "GridMUD":
     if mud.is_empty:
         return mud.copy()
 
@@ -308,21 +312,16 @@ def _remove_boundary_slice(mud: "MUD", dim: int, side: str) -> "MUD":
         mud.S[dim][:breakpoint_index] + mud.S[dim][breakpoint_index + 1 :]
     )
     result_P = np.delete(mud.P, interval_index, axis=dim)
-    return MUD(tuple(result_S), result_P)
+    return mud._new(tuple(result_S), result_P)
 
 
-def _move_slice_to_point(mud: "MUD", dim: int, point) -> "MUD":
+def _move_slice_to_point(
+    mud: "GridMUD", dim: int, point
+) -> "GridMUD":
     point = _as_fraction(point)
     moved_S = list(mud.S)
     moved_S[dim] = (point, point)
-    return MUD(tuple(moved_S), mud.P.copy())
-
-
-def _shift_mud_dim(mud: "MUD", dim: int, offset) -> "MUD":
-    offset = _as_fraction(offset)
-    shifted_S = list(mud.S)
-    shifted_S[dim] = tuple(point + offset for point in mud.S[dim])
-    return MUD(tuple(shifted_S), mud.P.copy())
+    return mud._new(tuple(moved_S), mud.P.copy())
 
 
 def _shift_grid_dim(mud: GridMUD, dim: int, offset):
@@ -332,12 +331,14 @@ def _shift_grid_dim(mud: GridMUD, dim: int, offset):
     return mud._new(tuple(shifted_S), mud.P.copy())
 
 
-def _zero_mud(S: Sequence[Sequence]) -> "MUD":
+def _zero_grid_like(
+    mud: "GridMUD", S: Sequence[Sequence]
+) -> "GridMUD":
     breakpoints = _normalize_breakpoints(S)
     shape = _shape_from_breakpoints(breakpoints)
     P = np.empty(shape, dtype=object)
-    P.fill(0)
-    return MUD(breakpoints, P)
+    P.fill(mud.ops.zero())
+    return mud._new(breakpoints, P)
 
 
 def _zero_affine_mud(S: Sequence[Sequence], affine_dim: int) -> "AffineMUD":
@@ -349,8 +350,8 @@ def _zero_affine_mud(S: Sequence[Sequence], affine_dim: int) -> "AffineMUD":
 
 
 def _align_mud_dim_to_extent(
-    mud: "MUD", dim: int, left: Fraction, right: Fraction
-) -> "MUD":
+    mud: "GridMUD", dim: int, left: Fraction, right: Fraction
+) -> "GridMUD":
     if left > right:
         raise ValueError("requires left <= right")
 
@@ -359,7 +360,7 @@ def _align_mud_dim_to_extent(
     target_S[dim] = target_dim
 
     if mud.is_empty:
-        return _zero_mud(tuple(target_S))
+        return _zero_grid_like(mud, tuple(target_S))
 
     if mud.S[dim][0] < left or mud.S[dim][-1] > right:
         raise ValueError("mud support is outside the requested extent")
@@ -514,6 +515,59 @@ class CellOps:
     def product(self, left, right):
         return left * right
 
+    def is_static_zero(self, value) -> bool:
+        return _is_static_zero(value)
+
+    def parameter_constraint(
+        self,
+        left,
+        relation: str,
+        right,
+        *,
+        name: str,
+        constraint_factory=None,
+    ):
+        if relation not in ("<", "<=", "==", ">=", ">"):
+            raise ValueError("unsupported parameter constraint relation")
+        if constraint_factory is not None:
+            if relation != "<=":
+                raise ValueError(
+                    "constraint_factory only supports <= parameter constraints"
+                )
+            return constraint_factory(left, right, name)
+        return left, relation, right
+
+    def nonnegative_constraint(
+        self,
+        value,
+        intervals: tuple[Interval, ...],
+        *,
+        name: str = "",
+    ):
+        return self.parameter_constraint(
+            0,
+            "<=",
+            value,
+            name=name,
+        )
+
+    def le_constraint(
+        self,
+        left,
+        right,
+        intervals: tuple[Interval, ...],
+        *,
+        name: str = "",
+        constraint_factory=None,
+    ):
+        return self.parameter_constraint(
+            left,
+            "<=",
+            right,
+            name=name,
+            constraint_factory=constraint_factory,
+        )
+
     def restrict(
         self,
         value,
@@ -579,6 +633,12 @@ class AffineCellOps(CellOps):
 
     def product(self, left, right):
         raise NotImplementedError("AffineMUD independent_product is not defined")
+
+    def is_static_zero(self, value: AffineCell) -> bool:
+        return (
+            _is_static_zero(value.left)
+            and _is_static_zero(value.right)
+        )
 
     def restrict(
         self,
@@ -678,6 +738,10 @@ class GridMUD:
     @property
     def is_empty(self) -> bool:
         return any(length == 0 for length in self.shape)
+
+    @property
+    def is_static_zero(self) -> bool:
+        return all(self.ops.is_static_zero(value) for value in self.P.flat)
 
     @property
     def ops(self) -> CellOps:

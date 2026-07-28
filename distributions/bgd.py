@@ -21,7 +21,6 @@ from distributions.mud import (
     MassCellOps,
     MassMUD,
     _align_mud_dim_to_extent,
-    _array_is_static_zero,
     _as_fraction,
     _boundary_slice_mud,
     _ceil_fraction,
@@ -34,7 +33,6 @@ from distributions.mud import (
     _object_power,
     _remove_boundary_slice,
     _shift_grid_dim,
-    _shift_mud_dim,
     _zero_affine_mud,
     fraction_lcm,
     interval_intersection,
@@ -55,13 +53,9 @@ def _default_decay_max(left, right, name: str):
     return max(left, right)
 
 
-def _default_le_constraint(left, right, name: str):
-    return left, "<=", right
-
-
 def _align_mud_dim_to_breakpoints(
-    mud: MUD, dim: int, breakpoints: Sequence[Fraction]
-) -> MUD:
+    mud: GridMUD, dim: int, breakpoints: Sequence[Fraction]
+) -> GridMUD:
     target_S = list(mud.S)
     target_S[dim] = merge_breakpoints(
         tuple(breakpoints), mud.S[dim], preserve_dirac=True
@@ -70,8 +64,8 @@ def _align_mud_dim_to_breakpoints(
 
 
 def _zero_mud_with_dim_extent(
-    mud: MUD, dim: int, left: Fraction, right: Fraction
-) -> MUD:
+    mud: GridMUD, dim: int, left: Fraction, right: Fraction
+) -> GridMUD:
     target_S = list(mud.S)
     target_S[dim] = (left,) if left == right else (left, right)
     shape = tuple(max(len(points) - 1, 0) for points in target_S)
@@ -111,7 +105,7 @@ def _validate_decay(value, name: str) -> None:
 class BGDBlock:
     index: Index
     direction: Direction
-    distribution: "MUD"
+    distribution: GridMUD
     translation: tuple[Fraction, ...]
     decay_factor: object
 
@@ -165,8 +159,12 @@ class BGD:
         return self.E.ndim
 
     @property
-    def C(self) -> MUD:
+    def C(self) -> GridMUD:
         return self.E[(1,) * self.ndim]
+
+    @property
+    def cell_family(self) -> type[GridMUD]:
+        return type(self.C)
 
     @staticmethod
     def direction_to_index(direction: Direction) -> Index:
@@ -417,7 +415,7 @@ class BGD:
                 factors = []
                 for dim, offset, exponent in option_tuple:
                     if offset != 0:
-                        piece = _shift_mud_dim(piece, dim, offset)
+                        piece = _shift_grid_dim(piece, dim, offset)
                     if direction[dim] < 0:
                         factors.append(_object_power(self.alpha[dim], exponent))
                     elif direction[dim] > 0:
@@ -481,34 +479,26 @@ class BGD:
             raise TypeError("other must be a BGD")
         if other.ndim != self.ndim:
             raise ValueError(f"other.ndim must be {self.ndim}")
+        self._validate_compatible_cell_family(other)
         if max_fn is None:
             max_fn = _default_decay_max
             validate_relaxation = True
         else:
             validate_relaxation = False
 
-        center_lefts = tuple(
-            min(self.center_lefts[dim], other.center_lefts[dim])
-            for dim in range(self.ndim)
-        )
-        center_rights = tuple(
-            max(self.center_rights[dim], other.center_rights[dim])
-            for dim in range(self.ndim)
-        )
-        left_lengths = tuple(
-            self._common_period_length(
-                self.left_lengths[dim], other.left_lengths[dim]
-            )
-            for dim in range(self.ndim)
-        )
-        right_lengths = tuple(
-            self._common_period_length(
-                self.right_lengths[dim], other.right_lengths[dim]
-            )
-            for dim in range(self.ndim)
-        )
+        (
+            center_lefts,
+            center_rights,
+            left_lengths,
+            right_lengths,
+        ) = self._common_frame((self, other))
 
-        left = self.align_frame(center_lefts, center_rights, left_lengths, right_lengths)
+        left = self.align_frame(
+            center_lefts,
+            center_rights,
+            left_lengths,
+            right_lengths,
+        )
         right = other.align_frame(
             center_lefts, center_rights, left_lengths, right_lengths
         )
@@ -552,52 +542,70 @@ class BGD:
     def shift(self, dim: int, offset) -> BGD:
         return self.add_constant(dim, offset)
 
+    def nonnegative_constraints(self) -> list:
+        constraints = []
+        ops = self.C.ops
+        for dim in range(self.ndim):
+            constraints.append(
+                ops.parameter_constraint(
+                    0,
+                    "<=",
+                    self.alpha[dim],
+                    name=f"alpha[{dim}] lower bound",
+                )
+            )
+            constraints.append(
+                ops.parameter_constraint(
+                    self.alpha[dim],
+                    "<",
+                    1,
+                    name=f"alpha[{dim}] upper bound",
+                )
+            )
+            constraints.append(
+                ops.parameter_constraint(
+                    0,
+                    "<=",
+                    self.beta[dim],
+                    name=f"beta[{dim}] lower bound",
+                )
+            )
+            constraints.append(
+                ops.parameter_constraint(
+                    self.beta[dim],
+                    "<",
+                    1,
+                    name=f"beta[{dim}] upper bound",
+                )
+            )
+
+        for edge_index in iter_indices(self.E.shape):
+            mud = self.E[edge_index]
+            for cell_index in iter_indices(mud.shape):
+                constraints.append(
+                    mud.ops.nonnegative_constraint(
+                        mud.P[cell_index],
+                        mud._intervals_for_index(cell_index),
+                        name=f"E{edge_index}.P{cell_index}",
+                    )
+                )
+        return constraints
+
     def le_constraints(self, other: BGD, *, constraint_factory=None) -> list:
         if not isinstance(other, BGD):
             raise TypeError("other must be a BGD")
         if other.ndim != self.ndim:
             raise ValueError(f"other.ndim must be {self.ndim}")
-        if constraint_factory is None:
-            constraint_factory = _default_le_constraint
-
-        left, right = self._align_pair_to_common_frame(other)
-        left = left.standardize(skip_static_zero=False)
-        right = right.standardize(skip_static_zero=False)
-        constraints = []
-
-        for dim in range(self.ndim):
-            constraints.append(
-                constraint_factory(left.alpha[dim], right.alpha[dim], f"alpha[{dim}]")
-            )
-            constraints.append(
-                constraint_factory(left.beta[dim], right.beta[dim], f"beta[{dim}]")
-            )
-
-        for index in iter_indices(left.E.shape):
-            left_mud = left.E[index]
-            right_mud = right.E[index]
-            target_S = tuple(
-                merge_breakpoints(
-                    left_mud.S[dim], right_mud.S[dim], preserve_dirac=True
-                )
-                for dim in range(self.ndim)
-            )
-            left_aligned = left_mud.align(target_S)
-            right_aligned = right_mud.align(target_S)
-            for cell_index in iter_indices(left_aligned.shape):
-                constraints.append(
-                    constraint_factory(
-                        left_aligned.P[cell_index],
-                        right_aligned.P[cell_index],
-                        f"E{index}.P{cell_index}",
-                    )
-                )
-
-        return constraints
+        return leq_sum(
+            [self],
+            other,
+            constraint_factory=constraint_factory,
+        )
 
     def independent_product(self, other: BGD) -> BGD:
         if not isinstance(other, BGD):
             raise TypeError("other must be a BGD")
+        self._validate_compatible_cell_family(other)
 
         shape = (3,) * (self.ndim + other.ndim)
         result_E = np.empty(shape, dtype=object)
@@ -639,7 +647,7 @@ class BGD:
                 piece = self.E[old_index].marginalize(dim)
                 if result_index == result_center and old_index != old_center:
                     for new_axis, old_axis in enumerate(remaining_dims):
-                        piece = _shift_mud_dim(
+                        piece = _shift_grid_dim(
                             piece, new_axis, self.center_lefts[old_axis]
                         )
                 piece = piece.scale(self._marginalize_removed_axis_factor(dim, removed_index))
@@ -655,7 +663,7 @@ class BGD:
         return BGD(result_E, alpha, beta).standardize()
 
     def permute_dims(self, order: Sequence[int]) -> BGD:
-        order = MUD._validate_permutation(order, self.ndim)
+        order = GridMUD._validate_permutation(order, self.ndim)
         transposed_E = np.transpose(self.E, axes=order)
         result_E = np.empty(transposed_E.shape, dtype=object)
         for index in iter_indices(result_E.shape):
@@ -672,6 +680,7 @@ class BGD:
             raise TypeError("new must be a BGD")
         if new.ndim != 1:
             raise ValueError("new must be a one-dimensional BGD")
+        self._validate_compatible_cell_family(new)
 
         if self.ndim == 1:
             return new.scale(self.mass()).standardize()
@@ -693,8 +702,21 @@ class BGD:
     ):
         if dim < 0 or dim >= self.ndim:
             raise ValueError("dim out of range")
+        from distributions.polynomial_mud import PolynomialMUD
+
+        if self.cell_family not in (MassMUD, PolynomialMUD):
+            raise TypeError(
+                "BGD.convolve_uniform requires MassMUD or PolynomialMUD blocks"
+            )
         if max_fn is not None and bound_factory is not None:
             raise ValueError("provide either max_fn or bound_factory, not both")
+        if self.cell_family is PolynomialMUD and any(
+            option is not None
+            for option in (max_fn, bound_factory, max_interval)
+        ):
+            raise ValueError(
+                "upper-bound options are not used by exact polynomial convolution"
+            )
 
         noise_left = _as_fraction(low)
         noise_right = _as_fraction(high)
@@ -751,7 +773,20 @@ class BGD:
         target_S = self._convolve_uniform_target_S(
             target_index, dim, target_left, target_right
         )
-        accumulated = _zero_affine_mud(target_S, dim)
+        if self.cell_family is MassMUD:
+            accumulated = _zero_affine_mud(target_S, dim)
+        else:
+            local_left, local_right = (
+                (target_left, target_right)
+                if target_index == (1,) * self.ndim
+                else (Fraction(0), target_right - target_left)
+            )
+            accumulated = _zero_mud_with_dim_extent(
+                self.E[target_index],
+                dim,
+                local_left,
+                local_right,
+            )
 
         for source_k in self._convolve_uniform_source_blocks(
             dim, target_axis, noise_left, noise_right, target_left, target_right
@@ -764,7 +799,7 @@ class BGD:
             )
 
             if source_index != (1,) * self.ndim:
-                source = _shift_mud_dim(source, dim, source_left)
+                source = _shift_grid_dim(source, dim, source_left)
 
             piece = source.convolve_uniform(dim, noise_left, noise_right)
             piece = piece.restrict(dim, ">=", target_left)
@@ -777,9 +812,13 @@ class BGD:
             piece = self._convert_piece_to_target_coords(piece, dim, target_index)
             accumulated = accumulated + piece
 
-        return accumulated.to_mass_mud_upper(
-            max_fn=max_fn, bound_factory=bound_factory, max_interval=max_interval
-        )
+        if self.cell_family is MassMUD:
+            return accumulated.to_mass_mud_upper(
+                max_fn=max_fn,
+                bound_factory=bound_factory,
+                max_interval=max_interval,
+            )
+        return accumulated
 
     def _convolve_uniform_target_S(
         self, index: Index, dim: int, target_left: Fraction, target_right: Fraction
@@ -865,30 +904,54 @@ class BGD:
 
         return wrapped
 
-    def _align_pair_to_common_frame(self, other: BGD) -> tuple[BGD, BGD]:
+    @classmethod
+    def _common_frame(
+        cls,
+        bgds: Sequence[BGD],
+    ) -> tuple[
+        tuple[Fraction, ...],
+        tuple[Fraction, ...],
+        tuple[Fraction, ...],
+        tuple[Fraction, ...],
+    ]:
+        bgds = tuple(bgds)
+        if not bgds:
+            raise ValueError("at least one BGD is required")
+        ndim = bgds[0].ndim
+        if any(bgd.ndim != ndim for bgd in bgds):
+            raise ValueError("BGD dimensions do not match")
+
         center_lefts = tuple(
-            min(self.center_lefts[dim], other.center_lefts[dim])
-            for dim in range(self.ndim)
+            min(bgd.center_lefts[dim] for bgd in bgds)
+            for dim in range(ndim)
         )
         center_rights = tuple(
-            max(self.center_rights[dim], other.center_rights[dim])
-            for dim in range(self.ndim)
+            max(bgd.center_rights[dim] for bgd in bgds)
+            for dim in range(ndim)
         )
-        left_lengths = tuple(
-            self._common_period_length(
-                self.left_lengths[dim], other.left_lengths[dim]
-            )
-            for dim in range(self.ndim)
-        )
-        right_lengths = tuple(
-            self._common_period_length(
-                self.right_lengths[dim], other.right_lengths[dim]
-            )
-            for dim in range(self.ndim)
-        )
+
+        left_lengths = []
+        right_lengths = []
+        for dim in range(ndim):
+            left_length = bgds[0].left_lengths[dim]
+            right_length = bgds[0].right_lengths[dim]
+            for bgd in bgds[1:]:
+                left_length = cls._common_period_length(
+                    left_length,
+                    bgd.left_lengths[dim],
+                )
+                right_length = cls._common_period_length(
+                    right_length,
+                    bgd.right_lengths[dim],
+                )
+            left_lengths.append(left_length)
+            right_lengths.append(right_length)
+
         return (
-            self.align_frame(center_lefts, center_rights, left_lengths, right_lengths),
-            other.align_frame(center_lefts, center_rights, left_lengths, right_lengths),
+            center_lefts,
+            center_rights,
+            tuple(left_lengths),
+            tuple(right_lengths),
         )
 
     def _tail_factor(self, direction: Direction):
@@ -916,7 +979,7 @@ class BGD:
                 for index in iter_indices(result.shape):
                     direction = self.index_to_direction(index)
                     if direction[dim] == 0 and index != center_index:
-                        result[index] = _shift_mud_dim(
+                        result[index] = _shift_grid_dim(
                             result[index],
                             dim,
                             local_shift,
@@ -1079,7 +1142,7 @@ class BGD:
 
     def _product_component_mud(
         self, index: Index, *, use_global_center: bool
-    ) -> MUD:
+    ) -> GridMUD:
         center_index = (1,) * self.ndim
         mud = self.E[index].copy()
         if index != center_index or use_global_center:
@@ -1087,7 +1150,7 @@ class BGD:
 
         for dim, left in enumerate(self.center_lefts):
             if left != 0:
-                mud = _shift_mud_dim(mud, dim, -left)
+                mud = _shift_grid_dim(mud, dim, -left)
         return mud
 
     @staticmethod
@@ -1177,7 +1240,7 @@ class BGD:
                     result[index] = center_piece
                 else:
                     result[index] = _align_mud_dim_to_extent(
-                        _shift_mud_dim(
+                        _shift_grid_dim(
                             self.E[index].restrict(dim, op, local_threshold),
                             dim,
                             old_left - threshold,
@@ -1224,7 +1287,7 @@ class BGD:
             is_true_center = center_index == (1,) * self.ndim
             center = self.E[center_index].copy()
             if not is_true_center:
-                center = _shift_mud_dim(center, dim, old_left - threshold)
+                center = _shift_grid_dim(center, dim, old_left - threshold)
 
             for block_number in range(1, block_count + 1):
                 block_start = old_left - block_number * length
@@ -1234,7 +1297,7 @@ class BGD:
                     continue
                 piece = piece.scale(self.alpha[dim] ** (block_number - 1))
                 shift = block_start if is_true_center else block_start - threshold
-                piece = _shift_mud_dim(piece, dim, shift)
+                piece = _shift_grid_dim(piece, dim, shift)
                 piece = self._convert_piece_to_target_coords(piece, dim, center_index)
                 center = center + piece
 
@@ -1266,7 +1329,7 @@ class BGD:
                     continue
                 piece = piece.scale(self.beta[dim] ** block_number)
                 shift = block_start if is_true_center else block_start - self.center_lefts[dim]
-                piece = _shift_mud_dim(piece, dim, shift)
+                piece = _shift_grid_dim(piece, dim, shift)
                 piece = self._convert_piece_to_target_coords(piece, dim, center_index)
                 center = center + piece
 
@@ -1292,12 +1355,12 @@ class BGD:
             right_mud = self.E[right_index]
 
             current = right_mud.restrict(dim, op, phase)
-            current = _shift_mud_dim(current, dim, -phase).scale(
+            current = _shift_grid_dim(current, dim, -phase).scale(
                 self.beta[dim] ** quotient
             )
 
             next_prefix = right_mud.restrict(dim, "<=", phase)
-            next_prefix = _shift_mud_dim(next_prefix, dim, length - phase).scale(
+            next_prefix = _shift_grid_dim(next_prefix, dim, length - phase).scale(
                 self.beta[dim] ** (quotient + 1)
             )
 
@@ -1329,12 +1392,12 @@ class BGD:
             left_mud = self.E[left_index]
 
             suffix = left_mud.restrict(dim, ">=", phase)
-            suffix = _shift_mud_dim(suffix, dim, -phase).scale(
+            suffix = _shift_grid_dim(suffix, dim, -phase).scale(
                 self.alpha[dim] ** block_number
             )
 
             prefix = left_mud.restrict(dim, op, phase)
-            prefix = _shift_mud_dim(prefix, dim, length - phase).scale(
+            prefix = _shift_grid_dim(prefix, dim, length - phase).scale(
                 self.alpha[dim] ** (block_number - 1)
             )
 
@@ -1360,9 +1423,11 @@ class BGD:
             result[index] = self._empty_for_index(index, dim, threshold)
         return result
 
-    def _empty_for_index(self, index: Index, dim: int, threshold: Fraction) -> MUD:
+    def _empty_for_index(
+        self, index: Index, dim: int, threshold: Fraction
+    ) -> GridMUD:
         point = threshold if index == (1,) * self.ndim else Fraction(0)
-        return MUD.empty_like_restrict(self.E[index].S, dim, point)
+        return self.E[index]._empty_like_restrict(dim, point)
 
     def _standardize_negative_boundary(
         self,
@@ -1375,7 +1440,7 @@ class BGD:
         boundary = _boundary_slice_mud(E[index], dim, "right")
         if boundary is None:
             return
-        if skip_static_zero and _array_is_static_zero(boundary.P):
+        if skip_static_zero and boundary.is_static_zero:
             return
 
         E[index] = _remove_boundary_slice(E[index], dim, "right")
@@ -1407,7 +1472,7 @@ class BGD:
         boundary = _boundary_slice_mud(E[index], dim, "left")
         if boundary is None:
             return
-        if skip_static_zero and _array_is_static_zero(boundary.P):
+        if skip_static_zero and boundary.is_static_zero:
             return
 
         E[index] = _remove_boundary_slice(E[index], dim, "left")
@@ -1429,14 +1494,18 @@ class BGD:
         ).scale(self.beta[dim])
 
     def _move_boundary_slice_to_index(
-        self, boundary: MUD, moved_dim: int, moved_point, target_index: Index
-    ) -> MUD:
+        self,
+        boundary: GridMUD,
+        moved_dim: int,
+        moved_point,
+        target_index: Index,
+    ) -> GridMUD:
         moved = _move_slice_to_point(boundary, moved_dim, moved_point)
         return self._convert_piece_to_target_coords(moved, moved_dim, target_index)
 
     def _convert_piece_to_target_coords(
-        self, moved: MUD, moved_dim: int, target_index: Index
-    ) -> MUD:
+        self, moved: GridMUD, moved_dim: int, target_index: Index
+    ) -> GridMUD:
         target_direction = self.index_to_direction(target_index)
 
         for dim, direction in enumerate(target_direction):
@@ -1482,13 +1551,27 @@ class BGD:
                 raise ValueError(f"E shape must be {shape}, got {tensor.shape}")
             tensor = tensor.copy()
 
+        cell_family = None
         for index in _iter_indices(shape):
-            if not isinstance(tensor[index], MUD):
-                raise TypeError(f"E{index} must be a MUD")
-            if tensor[index].ndim != ndim:
+            block = tensor[index]
+            if not isinstance(block, GridMUD):
+                raise TypeError(f"E{index} must be a GridMUD")
+            if block.ndim != ndim:
                 raise ValueError(f"E{index}.ndim must be {ndim}")
+            if cell_family is None:
+                cell_family = type(block)
+            elif type(block) is not cell_family:
+                raise TypeError(
+                    "all E blocks must use the same GridMUD cell family"
+                )
 
         return tensor
+
+    def _validate_compatible_cell_family(self, other: BGD) -> None:
+        if other.cell_family is not self.cell_family:
+            raise TypeError(
+                "other must use the same GridMUD cell family"
+            )
 
     def _validate_block_coordinate(self, k: Sequence[int]) -> None:
         if len(k) != self.ndim:
@@ -1557,8 +1640,100 @@ class BGD:
         )
 
     @staticmethod
-    def _is_degenerate_edge_block(mud: MUD, direction: Direction) -> bool:
+    def _is_degenerate_edge_block(
+        mud: GridMUD, direction: Direction
+    ) -> bool:
         return any(
             value != 0 and mud.S[dim][-1] == mud.S[dim][0]
             for dim, value in enumerate(direction)
         )
+
+
+def leq_sum(
+    lowers: Sequence[BGD],
+    upper: BGD,
+    *,
+    constraint_factory=None,
+) -> list:
+    """Construct constraints for sum(lowers) <= upper without symbolic maxima."""
+
+    if not isinstance(upper, BGD):
+        raise TypeError("upper must be a BGD")
+    lowers = tuple(lowers)
+    for index, lower in enumerate(lowers):
+        if not isinstance(lower, BGD):
+            raise TypeError(f"lowers[{index}] must be a BGD")
+        if lower.ndim != upper.ndim:
+            raise ValueError(
+                f"lowers[{index}].ndim must be {upper.ndim}"
+            )
+        upper._validate_compatible_cell_family(lower)
+
+    all_bgds = lowers + (upper,)
+    frame = upper._common_frame(all_bgds)
+    aligned_lowers = tuple(
+        lower.align_frame(*frame).standardize(skip_static_zero=False)
+        for lower in lowers
+    )
+    aligned_upper = upper.align_frame(*frame).standardize(
+        skip_static_zero=False
+    )
+    constraints = []
+    ops = aligned_upper.C.ops
+
+    for lower_index, lower in enumerate(aligned_lowers):
+        prefix = "" if len(aligned_lowers) == 1 else f"lowers[{lower_index}]."
+        for dim in range(aligned_upper.ndim):
+            constraints.append(
+                ops.parameter_constraint(
+                    lower.alpha[dim],
+                    "<=",
+                    aligned_upper.alpha[dim],
+                    name=f"{prefix}alpha[{dim}]",
+                    constraint_factory=constraint_factory,
+                )
+            )
+            constraints.append(
+                ops.parameter_constraint(
+                    lower.beta[dim],
+                    "<=",
+                    aligned_upper.beta[dim],
+                    name=f"{prefix}beta[{dim}]",
+                    constraint_factory=constraint_factory,
+                )
+            )
+
+    for edge_index in iter_indices(aligned_upper.E.shape):
+        upper_mud = aligned_upper.E[edge_index]
+        lower_muds = tuple(
+            lower.E[edge_index] for lower in aligned_lowers
+        )
+        target_S = tuple(
+            merge_breakpoints(
+                upper_mud.S[dim],
+                *(mud.S[dim] for mud in lower_muds),
+                preserve_dirac=True,
+            )
+            for dim in range(aligned_upper.ndim)
+        )
+        upper_aligned = upper_mud.align(target_S)
+        lowers_aligned = tuple(mud.align(target_S) for mud in lower_muds)
+
+        for cell_index in iter_indices(upper_aligned.shape):
+            lower_sum = upper_aligned.ops.zero()
+            for lower_mud in lowers_aligned:
+                lower_sum = upper_aligned.ops.add(
+                    lower_sum,
+                    lower_mud.P[cell_index],
+                )
+            constraints.append(
+                upper_aligned.ops.le_constraint(
+                    lower_sum,
+                    upper_aligned.P[cell_index],
+                    upper_aligned._intervals_for_index(cell_index),
+                    name=f"E{edge_index}.P{cell_index}",
+                    constraint_factory=constraint_factory,
+                )
+            )
+
+    return constraints
