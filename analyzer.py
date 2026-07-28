@@ -17,15 +17,25 @@ from distributions import BGD
 from distributions.mud import merge_breakpoints
 from Adapter import Adapter
 from Adapter.expr import Expr
-
-from probably.pgcl.ast.expressions import Binop, BinopExpr, UnopExpr, VarExpr, NatLitExpr, RealLitExpr
-from intervals import (
-    const_int_value,
-    interval_complement,
-    interval_intersect,
-    interval_is_empty,
-    interval_union,
+from semantics.program import (
+    ReplaceDistributionAssignment,
+    ShiftAssignment,
+    UniformConvolutionAssignment,
+    build_polynomial_program_semantics,
+    choice_probability,
+    classify_assignment,
+    condition_intervals,
+    restrict_intervals,
 )
+
+from probably.pgcl.ast.expressions import (
+    BinopExpr,
+    NatLitExpr,
+    RealLitExpr,
+    UnopExpr,
+    VarExpr,
+)
+from intervals import interval_complement
 from probably.pgcl.ast.instructions import (
     AsgnInstr,
     ChoiceInstr,
@@ -161,38 +171,13 @@ class ProgramStructure:
 
         raise ValueError(f"Unsupported distribution assignment: {dist_name!r}")
 
-    def _placeholder_distribution_bgd(self, expr):
-        if not isinstance(expr, VarExpr):
-            return None
-        if expr.var not in self.distribution_map:
-            return None
-        return self._distribution_spec_to_bgd(self.distribution_map[expr.var])
-
-    def _zero_restricted_bgd(self, bgd: BGD, dim: int) -> BGD:
-        point = bgd.center_lefts[dim]
-        return bgd.restrict(dim, ">=", point).restrict(dim, "<", point)
-
     def _restrict_intervals_bgd(self, bgd: BGD, dim: int, intervals, *, max_fn=None) -> BGD:
-        pieces = []
-        for lo, lo_closed, hi, hi_closed in interval_union(intervals, []):
-            interval = (lo, lo_closed, hi, hi_closed)
-            if interval_is_empty(interval):
-                continue
-
-            piece = bgd
-            if lo is not None:
-                piece = piece.restrict(dim, ">=" if lo_closed else ">", lo)
-            if hi is not None:
-                piece = piece.restrict(dim, "<=" if hi_closed else "<", hi)
-            pieces.append(piece)
-
-        if not pieces:
-            return self._zero_restricted_bgd(bgd, dim)
-
-        result = pieces[0]
-        for piece in pieces[1:]:
-            result = result.add(piece, max_fn=max_fn)
-        return result
+        return restrict_intervals(
+            bgd,
+            dim,
+            intervals,
+            max_fn=max_fn,
+        )
 
     @staticmethod
     def _common_frame_template(left: BGD, right: BGD, *, max_fn=None) -> BGD:
@@ -508,142 +493,42 @@ class ProgramStructure:
 
         return result
 
+    def build_polynomial_semantics(self):
+        """Construct exact loop-free PolynomialBGD semantics without solving."""
+
+        return build_polynomial_program_semantics(
+            self.prior,
+            self.prog,
+            self.distribution_map,
+        )
+
     def solve_bgd(self, adapter : Adapter = None, method="Park"): # method = "Park" | "Diabolo"
         """
         Traverse the pGCL AST and compute a BGD upper bound.
         """
         self.ctx_bgd = deepcopy(self.ori_bgd)
 
-        def const_value(expr):
-            if isinstance(expr, NatLitExpr):
-                return int(expr.value)
-            if isinstance(expr, RealLitExpr):
-                return expr.to_fraction()
-            raise ValueError("Assignment constant must be a numeric literal")
-
         def validate_if_condition(expr):
-            if isinstance(expr, BinopExpr):
-                op = expr.operator
-                if op in (Binop.AND, Binop.OR):
-                    v1, i1 = validate_if_condition(expr.lhs)
-                    v2, i2 = validate_if_condition(expr.rhs)
-                    if v1 != v2:
-                        raise ValueError("If condition must use a single variable")
-                    if op == Binop.AND:
-                        return v1, interval_intersect(i1, i2)
-                    return v1, interval_union(i1, i2)
-
-                def atom(var_name, atom_op, constant):
-                    if atom_op == Binop.LT:
-                        return var_name, [(None, False, constant, False)]
-                    if atom_op == Binop.LEQ:
-                        return var_name, [(None, False, constant, True)]
-                    if atom_op == Binop.GT:
-                        return var_name, [(constant, False, None, False)]
-                    if atom_op == Binop.GEQ:
-                        return var_name, [(constant, True, None, False)]
-                    if atom_op == Binop.EQ:
-                        return var_name, [(constant, True, constant, True)]
-                    raise ValueError(
-                        "If condition must use <, <=, >, >=, or = with one variable and one numeric literal"
-                    )
-
-                if op in (Binop.LT, Binop.LEQ, Binop.GT, Binop.GEQ, Binop.EQ):
-                    if isinstance(expr.lhs, VarExpr) and isinstance(expr.rhs, (NatLitExpr, RealLitExpr)):
-                        return atom(expr.lhs.var, op, const_int_value(expr.rhs))
-                    if isinstance(expr.lhs, (NatLitExpr, RealLitExpr)) and isinstance(expr.rhs, VarExpr):
-                        reverse = {
-                            Binop.LT: Binop.GT,
-                            Binop.LEQ: Binop.GEQ,
-                            Binop.GT: Binop.LT,
-                            Binop.GEQ: Binop.LEQ,
-                            Binop.EQ: Binop.EQ,
-                        }[op]
-                        return atom(expr.rhs.var, reverse, const_int_value(expr.lhs))
-                    raise ValueError(
-                        "If condition must compare one variable with one numeric literal"
-                    )
-
-                raise ValueError(
-                    "If condition must use <, <=, >, >=, or = with logical combination"
-                )
-            if isinstance(expr, UnopExpr):
-                return validate_if_condition(expr.expr)
-            raise ValueError("If condition must compare a variable with a numeric literal")
+            return condition_intervals(expr)
 
         def validate_assignment(instr):
-            if isinstance(instr, AsgnInstr):
-                lhs_name = instr.lhs
-                rhs = instr.rhs
-
-                dist_bgd = self._placeholder_distribution_bgd(rhs)
-                dist_add = None
-                if isinstance(rhs, BinopExpr):
-                    if rhs.operator == Binop.PLUS:
-                        if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
-                            rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
-                            if rhs_dist is not None:
-                                dist_add = (rhs.rhs.var, 1)
-                        if isinstance(rhs.rhs, VarExpr) and rhs.rhs.var == lhs_name:
-                            lhs_dist = self._placeholder_distribution_bgd(rhs.lhs)
-                            if lhs_dist is not None:
-                                dist_add = (rhs.lhs.var, 1)
-                    elif rhs.operator == Binop.MINUS:
-                        if isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name:
-                            rhs_dist = self._placeholder_distribution_bgd(rhs.rhs)
-                            if rhs_dist is not None:
-                                dist_add = (rhs.rhs.var, -1)
-
-                if (not isinstance(rhs, BinopExpr) or rhs.operator not in (Binop.PLUS, Binop.MINUS)) and \
-                    dist_bgd is None:
-                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
-
-                if dist_add is not None:
-                    dist_var, sign = dist_add
-                    dist_name, params = self.distribution_map[dist_var]
-                    if dist_name != "Uniform":
-                        raise ValueError(
-                            f"Only x := x +/- Uniform(a,b) is supported for distribution addition, got {dist_name}"
-                        )
-                    if sign < 0:
-                        low, high = params
-                        params = (-Fraction(high), -Fraction(low))
-                    c = ("add_uniform", params)
-                elif dist_bgd is not None:
-                    c = dist_bgd
-                elif isinstance(rhs.lhs, VarExpr) and rhs.lhs.var == lhs_name and isinstance(rhs.rhs,
-                                                                                           (NatLitExpr, RealLitExpr)):
-                    c = const_value(rhs.rhs)
-                    if rhs.operator == Binop.MINUS:
-                        c = -c
-                elif isinstance(rhs.rhs, VarExpr) and rhs.rhs.var == lhs_name and isinstance(rhs.lhs,
-                                                                                             (NatLitExpr, RealLitExpr)):
-                    if rhs.operator == Binop.MINUS:
-                        raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c")
-                    c = const_value(rhs.lhs)
-                else:
-                    raise ValueError(f"Assignment must be of form {lhs_name} := {lhs_name} + c or {lhs_name} := Distributions(...)")
-
-                if lhs_name not in self.var_map:
-                    raise ValueError(f"Unknown variable in assignment: {lhs_name}")
-                return lhs_name, c
+            action = classify_assignment(instr, self.distribution_map)
+            if action.variable not in self.var_map:
+                raise ValueError(
+                    f"Unknown variable in assignment: {action.variable}"
+                )
+            if isinstance(action, ShiftAssignment):
+                value = action.offset
+            elif isinstance(action, UniformConvolutionAssignment):
+                value = ("add_uniform", (action.low, action.high))
+            elif isinstance(action, ReplaceDistributionAssignment):
+                value = self._distribution_spec_to_bgd(action.distribution)
             else:
-                raise ValueError("Incorrect call function valid_assignment")
+                raise TypeError("unsupported assignment action")
+            return action.variable, value
 
         def validate_choice_prob(expr):
-            if isinstance(expr, NatLitExpr):
-                val = int(expr.value)
-                if not (0 <= val <= 1):
-                    raise ValueError("Choice probability must satisfy 0 <= c <= 1")
-                return val
-            if isinstance(expr, RealLitExpr):
-                if expr.is_infinite():
-                    raise ValueError("Choice probability must be finite")
-                fr = expr.to_fraction()
-                if not (0 <= fr <= 1):
-                    raise ValueError("Choice probability must satisfy 0 <= c <= 1")
-                return fr
-            raise ValueError("Choice probability must be a numeric literal")
+            return choice_probability(expr)
 
         def walk_expr(expr):
             if isinstance(expr, BinopExpr):
