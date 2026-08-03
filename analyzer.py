@@ -55,7 +55,9 @@ class ProgramStructure:
         center_subdivision=None,
         block_subdivision=None,
         template_dirac_iterations=2,
-        loop_unroll_iterations=1,
+        loop_unroll_iterations=2,
+        polynomial_loop_degree="infer",
+        polynomial_loop_degree_increment=0,
         uniform_convolution_max_interval=Fraction(1, 2),
         loop_template_visualization=None,
     ):
@@ -65,6 +67,10 @@ class ProgramStructure:
         self.block_subdivision = block_subdivision
         self.template_dirac_iterations = template_dirac_iterations
         self.loop_unroll_iterations = loop_unroll_iterations
+        self.polynomial_loop_degree = polynomial_loop_degree
+        self.polynomial_loop_degree_increment = (
+            polynomial_loop_degree_increment
+        )
         self.uniform_convolution_max_interval = (
             None
             if uniform_convolution_max_interval is None
@@ -494,12 +500,17 @@ class ProgramStructure:
         return result
 
     def build_polynomial_semantics(self):
-        """Construct exact loop-free PolynomialBGD semantics without solving."""
+        """Construct exact PolynomialBGD semantics without solving."""
 
         return build_polynomial_program_semantics(
             self.prior,
             self.prog,
             self.distribution_map,
+            loop_template_degree=self.polynomial_loop_degree,
+            loop_template_degree_increment=(
+                self.polynomial_loop_degree_increment
+            ),
+            loop_unroll_iterations=max(1, self.loop_unroll_iterations),
         )
 
     def solve_bgd(self, adapter : Adapter = None, method="Park"): # method = "Park" | "Diabolo"

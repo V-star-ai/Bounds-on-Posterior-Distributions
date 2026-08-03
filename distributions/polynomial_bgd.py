@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import product
 from numbers import Integral
 
@@ -14,20 +15,20 @@ from semantics.polynomial import ParameterPolynomial, StatePolynomial
 
 def symbolic_polynomial_bgd_template(
     shape: BGD,
-    total_degree: int,
+    total_degree: int | Sequence[int],
     context: ConstraintContext,
     *,
     name_prefix: str = "template",
 ) -> BGD:
-    """Create a polynomial BGD template and register all validity constraints."""
+    """Create a polynomial BGD template and register all validity constraints.
+
+    An integer selects the legacy total-degree basis. A sequence gives one
+    maximum exponent per state dimension and selects the tensor-product basis.
+    """
 
     if not isinstance(shape, BGD):
         raise TypeError("shape must be a BGD")
-    if not isinstance(total_degree, Integral) or isinstance(total_degree, bool):
-        raise TypeError("total_degree must be an integer")
-    total_degree = int(total_degree)
-    if total_degree < 0:
-        raise ValueError("total_degree must be nonnegative")
+    degree_spec = _normalize_degree_spec(total_degree, shape.ndim)
     if not isinstance(context, ConstraintContext):
         raise TypeError("context must be a ConstraintContext")
     if not isinstance(name_prefix, str) or not name_prefix.strip():
@@ -48,11 +49,19 @@ def symbolic_polynomial_bgd_template(
                 if left < right
             )
             terms = {}
-            for exponents in _total_degree_exponents(
-                canonical_shape.ndim,
-                active_dims,
-                total_degree,
-            ):
+            if isinstance(degree_spec, int):
+                exponents_iter = _total_degree_exponents(
+                    canonical_shape.ndim,
+                    active_dims,
+                    degree_spec,
+                )
+            else:
+                exponents_iter = _axis_degree_exponents(
+                    canonical_shape.ndim,
+                    active_dims,
+                    degree_spec,
+                )
+            for exponents in exponents_iter:
                 variable = context.declare(
                     _coefficient_name(
                         name_prefix,
@@ -86,6 +95,34 @@ def symbolic_polynomial_bgd_template(
     return template
 
 
+def _normalize_degree_spec(
+    degree: int | Sequence[int],
+    ndim: int,
+) -> int | tuple[int, ...]:
+    if isinstance(degree, Integral) and not isinstance(degree, bool):
+        degree = int(degree)
+        if degree < 0:
+            raise ValueError("total_degree must be nonnegative")
+        return degree
+    if isinstance(degree, (str, bytes)) or not isinstance(degree, Sequence):
+        raise TypeError(
+            "total_degree must be an integer or a per-dimension sequence"
+        )
+    if len(degree) != ndim:
+        raise ValueError(
+            "per-dimension degree sequence length must match shape dimensions"
+        )
+    normalized = []
+    for value in degree:
+        if not isinstance(value, Integral) or isinstance(value, bool):
+            raise TypeError("per-dimension degrees must be integers")
+        value = int(value)
+        if value < 0:
+            raise ValueError("per-dimension degrees must be nonnegative")
+        normalized.append(value)
+    return tuple(normalized)
+
+
 def _total_degree_exponents(
     ndim: int,
     active_dims: tuple[int, ...],
@@ -97,6 +134,20 @@ def _total_degree_exponents(
     ):
         if sum(active_exponents) > total_degree:
             continue
+        exponents = [0] * ndim
+        for dim, exponent in zip(active_dims, active_exponents):
+            exponents[dim] = exponent
+        yield tuple(exponents)
+
+
+def _axis_degree_exponents(
+    ndim: int,
+    active_dims: tuple[int, ...],
+    degrees: tuple[int, ...],
+):
+    for active_exponents in product(
+        *(range(degrees[dim] + 1) for dim in active_dims),
+    ):
         exponents = [0] * ndim
         for dim, exponent in zip(active_dims, active_exponents):
             exponents[dim] = exponent

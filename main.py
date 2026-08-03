@@ -5,7 +5,12 @@ from pathlib import Path
 from analyzer import ProgramStructure
 from Adapter.ipopt_adapter import IpoptAdapter
 from Adapter.rust_adapter import RustAdapter
+from Adapter.scip_adapter import SCIPAdapter
 from Adapter.z3_adapter import Z3Adapter
+from semantics.program import (
+    default_polynomial_variable_bounds,
+    evaluate_polynomial_bgd,
+)
 from visualize_bgd import plot_bgd
 
 simple_test1 = '''
@@ -99,10 +104,17 @@ def get_template_config(config):
     template = config.get("template", {})
     return {
         "dirac_iterations": int(template.get("dirac_iterations", 2)),
-        "loop_unroll_iterations": int(template.get("loop_unroll_iterations", 1)),
+        "loop_unroll_iterations": int(template.get("loop_unroll_iterations", 2)),
         "uniform_convolution_max_interval": template.get(
             "uniform_convolution_max_interval",
             0.5,
+        ),
+        "polynomial_loop_degree": template.get(
+            "polynomial_loop_degree",
+            "infer",
+        ),
+        "polynomial_loop_degree_increment": int(
+            template.get("polynomial_loop_degree_increment", 0)
         ),
     }
 
@@ -111,6 +123,7 @@ def get_solver_config(config):
     solver = config.get("solver", {})
     ipopt = solver.get("ipopt", {})
     rust = solver.get("rust", {})
+    scip = solver.get("scip", {})
     return {
         "name": solver.get("name", "ipopt"),
         "ipopt": {
@@ -137,6 +150,33 @@ def get_solver_config(config):
             "preprocess": bool(rust.get("preprocess", False)),
             "save_problem": rust.get("save_problem"),
         },
+        "scip": {
+            "variable_lower_bound": float(
+                scip.get("variable_lower_bound", 0.0)
+            ),
+            "variable_upper_bound": float(
+                scip.get("variable_upper_bound", 1000.0)
+            ),
+            "variable_bounds": scip.get("variable_bounds"),
+            "strict_epsilon": float(
+                scip.get("strict_epsilon", 1e-7)
+            ),
+            "factor_bound": float(scip.get("factor_bound", 10.0)),
+            "certificate_degree": scip.get("certificate_degree"),
+            "time_limit": scip.get("time_limit"),
+            "relative_gap": scip.get("relative_gap"),
+            "feasibility_tolerance": scip.get(
+                "feasibility_tolerance"
+            ),
+            "feasibility_emphasis": bool(
+                scip.get("feasibility_emphasis", False)
+            ),
+            "use_symmetry": bool(scip.get("use_symmetry", True)),
+            "display": bool(scip.get("display", False)),
+            "require_optimal": bool(
+                scip.get("require_optimal", False)
+            ),
+        },
     }
 
 
@@ -146,6 +186,8 @@ def build_solver(config):
         return IpoptAdapter(**config["ipopt"])
     if name in ("rust", "diabolo"):
         return RustAdapter(**config["rust"])
+    if name == "scip":
+        return SCIPAdapter(**config["scip"])
     if name == "z3":
         return Z3Adapter()
     raise ValueError(f"Unknown solver: {config['name']}")
@@ -153,6 +195,40 @@ def build_solver(config):
 
 def solve_with_config(prog, config):
     solver = build_solver(config)
+    if isinstance(solver, SCIPAdapter):
+        semantics = prog.build_polynomial_semantics()
+        bound = max(
+            abs(solver.variable_lower_bound),
+            abs(solver.variable_upper_bound),
+        )
+        variable_bounds = default_polynomial_variable_bounds(
+            semantics.constraints,
+            coefficient_bound=bound,
+            mass_bound=solver.variable_upper_bound,
+            strict_epsilon=solver.strict_epsilon,
+        )
+        solved = solver.solve_polynomial(
+            semantics.constraints,
+            variable_bounds=variable_bounds,
+            objective=semantics.objective,
+        )
+        if not solved.has_solution:
+            raise RuntimeError(
+                "SCIP did not find a polynomial BGD certificate"
+            )
+        print(
+            "[Polynomial semantics] "
+            f"loop_degrees={semantics.loop_template_degrees}, "
+            f"variables={len(semantics.constraints.variables)}, "
+            f"constraints={len(semantics.constraints.constraints)}, "
+            f"objective={solved.objective_value}, "
+            f"status={solved.status}",
+            flush=True,
+        )
+        return evaluate_polynomial_bgd(
+            semantics.distribution,
+            solved.values,
+        )
     return prog.solve_bgd(solver, method="Park")
 
 
@@ -179,7 +255,7 @@ def main():
     parser.add_argument(
         "--program",
         "-p",
-        default="./benchmarks/PSI/whileloopsum.txt",
+        default="./benchmarks/PLDI22/add_uniform.txt",
         help="Program source file containing prior: and program: sections",
     )
     args = parser.parse_args()
@@ -196,6 +272,12 @@ def main():
         block_subdivision=prior_config["block_subdivision"],
         template_dirac_iterations=template_config["dirac_iterations"],
         loop_unroll_iterations=template_config["loop_unroll_iterations"],
+        polynomial_loop_degree=template_config[
+            "polynomial_loop_degree"
+        ],
+        polynomial_loop_degree_increment=template_config[
+            "polynomial_loop_degree_increment"
+        ],
         uniform_convolution_max_interval=template_config[
             "uniform_convolution_max_interval"
         ],
@@ -218,10 +300,12 @@ def main():
         fallback_html=visualization_config["fallback_html"],
         show=visualization_config["show"],
     )
-    print(
-        "BGD visualization opened in browser, "
-        f"or written to {visualization_config['fallback_html']} if browser display failed"
-    )
+    if visualization_config["show"]:
+        print(
+            "BGD visualization opened in browser, "
+            f"or written to {visualization_config['fallback_html']} "
+            "if browser display failed"
+        )
 
 
 if __name__ == "__main__":

@@ -9,8 +9,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import plotly.graph_objects as go
 
-from distributions import BGD
+from distributions import BGD, PolynomialCell
 from distributions.mud import AffineCell
+from semantics import ParameterPolynomial
 
 
 SpecType = Union[
@@ -53,6 +54,12 @@ def _to_fraction(value) -> Fraction:
 
 
 def _to_float(value, name: str) -> float:
+    if isinstance(value, ParameterPolynomial):
+        if not value.is_constant:
+            raise TypeError(
+                f"{name} still contains symbolic parameters: {value!r}"
+            )
+        value = value.constant_value
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
@@ -297,6 +304,31 @@ def _eval_mud_at_with_intervals(mud, local_x: Sequence[Fraction], *, value: str)
         affine_dim = getattr(mud, "affine_dim", 0)
         payload = _payload_at(
             payload, intervals[affine_dim], local_x[affine_dim]
+        )
+
+    if isinstance(payload, PolynomialCell):
+        if value == "cell_mass":
+            return (
+                _to_float(
+                    mud.ops.mass(payload, intervals),
+                    "polynomial cell mass",
+                ),
+                intervals,
+            )
+        if value != "density":
+            raise ValueError("value must be 'density' or 'cell_mass'")
+        local_coordinates = [
+            Fraction(0)
+            if left == right
+            else (point - left) / (right - left)
+            for point, (left, right) in zip(local_x, intervals)
+        ]
+        return (
+            _to_float(
+                payload.polynomial.evaluate(local_coordinates),
+                "polynomial cell density",
+            ),
+            intervals,
         )
 
     if value == "cell_mass":

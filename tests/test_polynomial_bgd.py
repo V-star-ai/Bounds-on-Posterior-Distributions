@@ -494,6 +494,31 @@ class TestSymbolicPolynomialBGDTemplate(unittest.TestCase):
             },
         )
 
+    def test_template_accepts_per_dimension_degree_limits(self):
+        shape = make_polynomial_bgd().independent_product(
+            make_polynomial_bgd()
+        )
+        context = ConstraintContext()
+
+        template = symbolic_polynomial_bgd_template(
+            shape,
+            (1, 2),
+            context,
+            name_prefix="axis",
+        )
+
+        self.assertEqual(
+            set(template.C.P[0, 0].polynomial.terms),
+            {
+                (0, 0),
+                (0, 1),
+                (0, 2),
+                (1, 0),
+                (1, 1),
+                (1, 2),
+            },
+        )
+
     def test_template_excludes_state_powers_on_dirac_dimensions(self):
         E = np.empty((3,), dtype=object)
         E[0] = MUD([[0, 1]], [0])
@@ -522,6 +547,10 @@ class TestSymbolicPolynomialBGDTemplate(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "nonnegative"):
             symbolic_polynomial_bgd_template(shape, -1, context)
+        with self.assertRaisesRegex(ValueError, "length"):
+            symbolic_polynomial_bgd_template(shape, (0, 1), context)
+        with self.assertRaisesRegex(TypeError, "integers"):
+            symbolic_polynomial_bgd_template(shape, (False,), context)
         symbolic_polynomial_bgd_template(
             shape,
             0,

@@ -23,10 +23,12 @@
   "template": {
     "loop_unroll_iterations": 2,
     "dirac_iterations": 2,
+    "polynomial_loop_degree": "infer",
+    "polynomial_loop_degree_increment": 0,
     "uniform_convolution_max_interval": 0.1
   },
   "solver": {
-    "name": "rust",
+    "name": "scip",
     "ipopt": {
       "max_iter": 500,
       "tol": 1e-6,
@@ -48,6 +50,20 @@
       "verbose": false,
       "preprocess": false,
       "save_problem": null
+    },
+    "scip": {
+      "variable_lower_bound": 0.0,
+      "variable_upper_bound": 20.0,
+      "strict_epsilon": 1e-7,
+      "factor_bound": 20.0,
+      "certificate_degree": null,
+      "time_limit": 60.0,
+      "relative_gap": 1e-4,
+      "feasibility_tolerance": 1e-7,
+      "feasibility_emphasis": false,
+      "use_symmetry": true,
+      "display": false,
+      "require_optimal": false
     }
   }
 }
