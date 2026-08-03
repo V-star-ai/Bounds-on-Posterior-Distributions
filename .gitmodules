@@ -1,0 +1,4 @@
+[submodule "diabolo"]
+	path = diabolo
+	url = git@github.com:RhineGST/diabolo.git
+	branch = ppl-integration
